@@ -25,7 +25,7 @@ NUM_GPU=-1
 KEEP_ALIVE="60m"
 PORT=8000
 DEBUG_MODE=False
-VERBOSE_LOG=True
+VERBOSE_LOG=False
 
 if [ -f "$CONFIG_FILE" ]; then
     echo -e "${CYAN}📄 Loading config from $CONFIG_FILE${NC}"
@@ -101,9 +101,14 @@ pkill -f "src.server" 2>/dev/null || true
 fuser -k "${PORT}/tcp" 2>/dev/null || true
 sleep 1
 
-python3 -m src.server > /tmp/gateway-server.log 2>&1 &
+python3 -m src.server &
 SERVER_PID=$!
 echo "  Server PID: $SERVER_PID"
+
+# Enable verbose print if requested
+if [ "$VERBOSE_LOG" = "True" ] || [ "$VERBOSE_LOG" = "true" ]; then
+    echo "  [verbose-log enabled — request log will appear below after tunnel setup]"
+fi
 
 echo -n "  Waiting for server"
 READY=0

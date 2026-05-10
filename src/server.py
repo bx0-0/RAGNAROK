@@ -44,6 +44,9 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 
 VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
 
+# Request log file — tail this to see live requests
+REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")
+
 request_semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 http_client = None
 
@@ -66,11 +69,15 @@ def log_request(req_id, method, path, status, duration, tokens_in, tokens_out, e
     request_log.append(entry)
     if len(request_log) > MAX_LOG_ENTRIES:
         request_log.pop(0)
-    _print_request_line(entry)
+    line = _format_request_line(entry)
+    # Print to both stdout (for direct python runs) and log file
+    if _print_to_stdout:
+        print(line, flush=True)
+    with open(REQUEST_LOG_FILE, "a") as f:
+        f.write(line + "\n")
+        f.flush()
 
-def _print_request_line(entry):
-    if not VERBOSE_LOG:
-        return
+def _format_request_line(entry):
     status_color = "\033[0;32m" if entry["status"] == 200 else "\033[0;31m"
     reset = "\033[0m"
     line = (
@@ -82,7 +89,9 @@ def _print_request_line(entry):
     if entry["extra"]:
         line += f"  │  {entry['extra']}"
     line += "\n  └─"
-    print(line, flush=True)
+    return line
+
+_print_to_stdout = False  # Turned on by --verbose-log via env
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

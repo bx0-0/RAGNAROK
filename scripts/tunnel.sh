@@ -51,7 +51,6 @@ PUBLIC_URL=""
 
 while [ $ELAPSED -lt $TIMEOUT ]; do
     if [ -f /tmp/cloudflared.log ]; then
-        # Extract URL from cloudflared log
         FOUND_URL=$(grep -oP 'https://[a-zA-Z0-9\-]+\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null | tail -1)
         if [ -n "$FOUND_URL" ]; then
             PUBLIC_URL="$FOUND_URL"
@@ -63,31 +62,47 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
     ELAPSED=$((ELAPSED + 2))
 done
 
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
 if [ -n "$PUBLIC_URL" ]; then
     echo ""
-    echo "╔═══════════════════════════════════════════════════════════╗"
-    echo "║         🎉  KAGGLE OLLAMA GATEWAY IS READY  🎉          ║"
-    echo "╠═══════════════════════════════════════════════════════════╣"
-    echo "║  Public API:                                            ║"
-    echo "║  ${PUBLIC_URL}/v1                                        ║"
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║           🎉  KAGGLE OLLAMA GATEWAY IS READY  🎉         ║"
+    echo "╠════════════════════════════════════════════════════════════╣"
+    echo "║  Public API:                                             ║"
+    echo "║  ${PUBLIC_URL}/v1                                       ║"
     echo "║  Model: ${MODEL_NAME:-qwen3:8b}                                       ║"
-    echo "║                                                         ║"
-    echo "║  Test it:                                               ║"
-    echo "║  curl ${PUBLIC_URL}/v1/models                               ║"
-    echo "╚═══════════════════════════════════════════════════════════╝"
+    echo "║                                                          ║"
+    echo "║  Test it:                                                ║"
+    echo "║  curl ${PUBLIC_URL}/v1/models                              ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
     echo ""
 
-    # Watchdog — restart tunnel if it dies
-    while true; do
-        if ! kill -0 $TUNNEL_PID 2>/dev/null; then
-            echo "⚠️  Tunnel died, restarting in 10s..."
+    # Watchdog in background
+    (
+        while true; do
+            if ! kill -0 $TUNNEL_PID 2>/dev/null; then
+                echo "⚠️  Tunnel died, restarting in 10s..."
+                sleep 10
+                ./cloudflared tunnel --url "http://localhost:${PORT}" > /tmp/cloudflared.log 2>&1 &
+                TUNNEL_PID=$!
+                sleep 5
+            fi
             sleep 10
-            ./cloudflared tunnel --url "http://localhost:${PORT}" > /tmp/cloudflared.log 2>&1 &
-            TUNNEL_PID=$!
-            sleep 5
-        fi
-        sleep 10
-    done
+        done
+    ) &
+
+    # If verbose-log enabled, tail the request log live in the cell
+    if [ "${VERBOSE_LOG}" = "True" ] || [ "${VERBOSE_LOG}" = "true" ]; then
+        echo ""
+        echo -e "${GREEN}─── Request Log (live) ───${NC}"
+        tail -f /tmp/gateway-requests.log
+    else
+        # Keep script alive silently
+        while true; do sleep 60; done
+    fi
 else
     echo "❌ Failed to get tunnel URL within ${TIMEOUT}s"
     echo "   Log output:"
