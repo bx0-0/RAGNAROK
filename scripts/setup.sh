@@ -11,7 +11,7 @@ fuser -k 8000/tcp 2>/dev/null || true
 rm -f cloudflared 2>/dev/null || true
 
 echo "  ├─ Installing zstd & toilet (required by Ollama & banners)..."
-apt-get update -qq && apt-get install -y -qq zstd toilet fonts-extra > /dev/null 2>&1 || true
+apt-get update -qq && apt-get install -y -qq zstd toilet toilet-fonts fonts-extra > /dev/null 2>&1 || true
 
 echo "  ├─ Installing Ollama..."
 if ! command -v ollama &> /dev/null; then
