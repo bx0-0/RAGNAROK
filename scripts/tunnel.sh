@@ -64,20 +64,25 @@ done
 
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+BOLD='\033[1m'
+DIM='\033[2m'
+WHITE='\033[1;37m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
 if [ -n "$PUBLIC_URL" ]; then
     echo ""
-    echo "╔════════════════════════════════════════════════════════════╗"
-    echo "║           🎉  KAGGLE OLLAMA GATEWAY IS READY  🎉         ║"
-    echo "╠════════════════════════════════════════════════════════════╣"
-    echo "║  Public API:                                             ║"
-    echo "║  ${PUBLIC_URL}/v1                                       ║"
-    echo "║  Model: ${MODEL_NAME:-qwen3:8b}                                       ║"
-    echo "║                                                          ║"
-    echo "║  Test it:                                                ║"
-    echo "║  curl ${PUBLIC_URL}/v1/models                              ║"
-    echo "╚════════════════════════════════════════════════════════════╝"
+    echo -e "${MAGENTA}${BOLD}  ╔══════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${GREEN}              🔥  RAGNAROK IS ONLINE  🔥              ${MAGENTA}║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ╠══════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${WHITE}${DIM}  Endpoint:${NC}${WHITE}  ${YELLOW}${PUBLIC_URL}/v1                           ${MAGENTA}║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${WHITE}${DIM}  Model:${NC}${WHITE}     ${GREEN}${MODEL_NAME:-qwen3:8b}                                      ${MAGENTA}║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${WHITE}${DIM}  Port:${NC}${WHITE}      ${CYAN}${PORT:-8000}                                      ${MAGENTA}║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ╠══════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${NC}                                                          ${MAGENTA}${BOLD}║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${CYAN}  curl ${PUBLIC_URL}/v1/models${NC}                              ${MAGENTA}${BOLD}║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ╚══════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
     # Watchdog in background
@@ -97,15 +102,13 @@ if [ -n "$PUBLIC_URL" ]; then
     # If verbose-log enabled, tail the request log live in the cell
     if [ "${VERBOSE_LOG}" = "True" ] || [ "${VERBOSE_LOG}" = "true" ]; then
         echo ""
-        echo -e "${GREEN}─── Request Log (live) ───${NC}"
-        # Wait for server to create the log file
+        echo -e "${GREEN}${BOLD}  ═══ Request Log (live) ═══${NC}"
         for _wait in $(seq 1 15); do
             if [ -f /tmp/gateway-requests.log ]; then break; fi
             sleep 1
         done
         tail -f /tmp/gateway-requests.log
     else
-        # Keep script alive silently
         while true; do sleep 60; done
     fi
 else

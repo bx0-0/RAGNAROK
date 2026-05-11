@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Kaggle Ollama Gateway — Main Launcher
+# RAGNAROK — Main Launcher
 #
 
 set -e
@@ -9,7 +9,11 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+BLUE='\033[0;34m'
 BOLD='\033[1m'
+DIM='\033[2m'
+WHITE='\033[1;37m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,7 +63,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --keep-alive <dur>    Keep model loaded (default: 60m)"
             echo "  --port <n>            Server port (default: 8000)"
             echo "  --debug               Enable verbose logging"
-            echo "  --verbose-log <bool>    Show request log in terminal (default: True)"
+            echo "  --verbose-log <bool>  Show request log in terminal (default: True)"
             echo "  --help"
             exit 0
             ;;
@@ -72,30 +76,35 @@ export FLASH_ATTN NUM_GPU KEEP_ALIVE PORT DEBUG_MODE VERBOSE_LOG
 
 clear
 echo ""
-echo -e "${BOLD}${GREEN}  ██╗      ██████╗  █████╗ ██████╗ ██╗   ██╗███████╗██████╗ ${NC}"
-echo -e "${BOLD}${GREEN}  ██║     ██╔═══██╗██╔══██╗██╔══██╗██║   ██║██╔════╝██╔══██╗${NC}"
-echo -e "${BOLD}${GREEN}  ██║     ██║   ██║███████║██████╔╝██║   ██║█████╗  ██████╔╝${NC}"
-echo -e "${BOLD}${GREEN}  ██║     ██║   ██║██╔══██║██╔═══╝ ██║   ██║██╔══╝  ██╔══██╗${NC}"
-echo -e "${BOLD}${GREEN}  ███████╗╚██████╔╝██║  ██║██║     ╚██████╔╝███████╗██║  ██║${NC}"
-echo -e "${BOLD}${GREEN}  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝      ╚═════╝ ╚══════╝╚═╝  ╚═╝${NC}"
-echo -e "${BOLD}${CYAN}                    Gateway${NC}"
+
+# ─── ASCII Banner ───
+echo -e "${MAGENTA}${BOLD}  _  .-')     ('-.                     .-') _    ('-.     _  .-')               .-. .-')   ${NC}"
+echo -e "${MAGENTA}${BOLD} ( \( -O )   ( OO ).-.                ( OO ) )  ( OO ).-.( \( -O )              \  ( OO )   ${NC}"
+echo -e "${MAGENTA}${BOLD}  ,------.   / . --. /  ,----.    ,--./ ,--,'   / . --. / ,------.  .-'),-----. ,--. ,--.   ${NC}"
+echo -e "${MAGENTA}${BOLD}  |   /`. '  | \-.  \  '  .-./-') |   \ |  |\   | \-.  \  |   /`. '( OO'  .-.  '|  .'   /   ${NC}"
+echo -e "${MAGENTA}${BOLD}  |  /  | |.-'-'  |  | |  |_( O- )|    \|  | ).-'-'  |  | |  /  | |/   |  | |  ||      /,  ${NC}"
+echo -e "${MAGENTA}${BOLD}  |  |_.' | \| |_.'  | |  | .--, \|  .     |/  \| |_.'  | |  |_.' |\_) |  |\|  ||     ' _) ${NC}"
+echo -e "${MAGENTA}${BOLD}  |  .  '.'  |  .-.  |(|  | '. (_/|  |\    |    |  .-.  | |  .  '.'  \ |  | |  ||  .   \   ${NC}"
+echo -e "${MAGENTA}${BOLD}  |  |\  \   |  | |  | |  '--'  | |  | \   |    |  | |  | |  |\  \    `'  '-'  '|  |\   \  ${NC}"
+echo -e "${MAGENTA}${BOLD}  \`--' '--'  \`--' \`--'  \`------'  \`--'  \`--'    \`--' \`--' \`--' '--'     \`-----' \`--' '--' ${NC}"
 echo ""
-echo -e "  ${YELLOW}Model:${NC}      ${BOLD}$MODEL_NAME${NC}"
-echo -e "  ${YELLOW}Concurrent:${NC} ${BOLD}$MAX_CONCURRENT${NC}"
-echo -e "  ${YELLOW}Context:${NC}    ${BOLD}$NUM_CTX${NC}"
-echo -e "  ${YELLOW}Port:${NC}       ${BOLD}$PORT${NC}"
+echo -e "  ${DIM}╭──────────────────────────────────────────────────╮${NC}"
+echo -e "  ${DIM}│${CYAN}${BOLD} Model:${DIM}    ${GREEN}${MODEL_NAME}                              ${CYAN}${BOLD}Port:${DIM}    ${YELLOW}${PORT}${NC}${DIM}      │${NC}"
+echo -e "  ${DIM}│${CYAN}${BOLD} Context:${DIM}  ${GREEN}${NUM_CTX}                               ${CYAN}${BOLD}GPU:${DIM}     ${YELLOW}${NUM_GPU}${NC}${DIM}       │${NC}"
+echo -e "  ${DIM}│${CYAN}${BOLD} Threads:${DIM}  ${GREEN}${MAX_CONCURRENT}                               ${CYAN}${BOLD}Flash:${DIM}   ${YELLOW}${FLASH_ATTN}${NC}${DIM}      │${NC}"
+echo -e "  ${DIM}╰──────────────────────────────────────────────────╯${NC}"
 echo ""
 
-# Step 1
-echo -e "${YELLOW}[1/4]${NC} Installing dependencies..."
+# ─── Step 1 ───
+echo -e "${BOLD}${WHITE}[1/4]${NC} ${DIM}Installing dependencies...${NC}"
 bash "$SCRIPT_DIR/scripts/setup.sh"
 
-# Step 2
-echo -e "${YELLOW}[2/4]${NC} Preparing Ollama & model..."
+# ─── Step 2 ───
+echo -e "${BOLD}${WHITE}[2/4]${NC} ${DIM}Preparing Ollama & model...${NC}"
 bash "$SCRIPT_DIR/scripts/install_model.sh"
 
-# Step 3
-echo -e "${YELLOW}[3/4]${NC} Starting FastAPI server..."
+# ─── Step 3 ───
+echo -e "${BOLD}${WHITE}[3/4]${NC} ${DIM}Starting FastAPI server...${NC}"
 cd "$SCRIPT_DIR"
 pkill -f "src.server" 2>/dev/null || true
 fuser -k "${PORT}/tcp" 2>/dev/null || true
@@ -103,18 +112,17 @@ sleep 1
 
 python3 -m src.server > /tmp/gateway-server.log 2>&1 &
 SERVER_PID=$!
-echo "  Server PID: $SERVER_PID"
+echo -e "  ${DIM}PID: ${YELLOW}${SERVER_PID}${NC}"
 
-# Enable verbose print if requested
 if [ "$VERBOSE_LOG" = "True" ] || [ "$VERBOSE_LOG" = "true" ]; then
-    echo "  [verbose-log enabled — request log will appear below after tunnel setup]"
+    echo -e "  ${DIM}[verbose-log enabled — request log appears after tunnel setup]${NC}"
 fi
 
-echo -n "  Waiting for server"
+echo -n "  ${DIM}Waiting for server${NC}"
 READY=0
 for i in $(seq 1 60); do
     sleep 2
-    printf "."
+    printf "${CYAN}.${NC}"
     if curl -s -o /dev/null -w "%{http_code}" "http://localhost:${PORT}/v1/models" 2>/dev/null | grep -q "200"; then
         READY=1
         break
@@ -128,8 +136,8 @@ if [ "$READY" -ne 1 ]; then
     kill $SERVER_PID 2>/dev/null || true
     exit 1
 fi
-echo -e "${GREEN}✅${NC}"
+echo -e " ${GREEN}✅${NC}"
 
-# Step 4
-echo -e "${YELLOW}[4/4]${NC} Creating Cloudflare tunnel..."
+# ─── Step 4 ───
+echo -e "${BOLD}${WHITE}[4/4]${NC} ${DIM}Creating Cloudflare tunnel...${NC}"
 bash "$SCRIPT_DIR/scripts/tunnel.sh"
