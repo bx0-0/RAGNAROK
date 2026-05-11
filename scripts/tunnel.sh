@@ -87,19 +87,17 @@ if [ -n "$PUBLIC_URL" ]; then
     ) &
 
     # ── Banner ──
+    SEP=$(printf '=%.0s' $(seq 1 56))
     echo ""
-    echo -e "${MAGENTA}${BOLD}  ╔══════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}${BOLD}  ║         🔥  RAGNAROK IS ONLINE  🔥                              ║${NC}"
-    echo -e "${MAGENTA}${BOLD}  ╠══════════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${CYAN}${BOLD}  ║  Endpoint                                                       ║${NC}"
-    echo -e "${YELLOW}  ║  ${PUBLIC_URL}/v1                                ║${NC}"
-    echo -e "${CYAN}${BOLD}  ║  Model                                                          ║${NC}"
-    echo -e "${GREEN}  ║  ${MODEL_NAME:-qwen3:8b}                                         ║${NC}"
-    echo -e "${CYAN}${BOLD}  ║  Port                                                           ║${NC}"
-    echo -e "${WHITE}  ║  ${PORT:-8000}                                           ║${NC}"
-    echo -e "${MAGENTA}${BOLD}  ╠══════════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${DIM}  ║  curl ${YELLOW}${PUBLIC_URL}/v1/models                          ║${NC}"
-    echo -e "${MAGENTA}${BOLD}  ╚══════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${MAGENTA}${BOLD}  ${SEP}${NC}"
+    echo -e "${GREEN}${BOLD}        🔥  RAGNAROK IS ONLINE  🔥         ${NC}"
+    echo -e "${MAGENTA}${BOLD}  ${SEP}${NC}"
+    echo -e "${CYAN}${BOLD}  Endpoint${DIM}  ${YELLOW}${PUBLIC_URL}/v1${NC}"
+    echo -e "${CYAN}${BOLD}  Model${DIM}     ${GREEN}${MODEL_NAME:-qwen3:8b}${NC}"
+    echo -e "${CYAN}${BOLD}  Port${DIM}      ${WHITE}${PORT:-8000}${NC}"
+    echo -e "${MAGENTA}${BOLD}  ${SEP}${NC}"
+    echo -e "${DIM}  curl ${YELLOW}${PUBLIC_URL}/v1/models${DIM}${NC}"
+    echo -e "${MAGENTA}${BOLD}  ${SEP}${NC}"
     echo ""
 
     # If verbose-log enabled, tail the request log live in the cell
