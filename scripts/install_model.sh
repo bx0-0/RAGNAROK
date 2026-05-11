@@ -19,7 +19,15 @@ echo "  ├─ Pulling model: $MODEL"
 if ollama list | grep -q "^$MODEL "; then
     echo "  │  ℹ️  Model already cached"
 else
-    ollama pull "$MODEL"
+    ollama pull "$MODEL" > /tmp/ollama-pull.log 2>&1 &
+    PULL_PID=$!
+    printf "  │  Downloading "
+    while kill -0 $PULL_PID 2>/dev/null; do
+        printf "."
+        sleep 3
+    done
+    wait $PULL_PID
+    echo ""
     echo "  │  ✅ Model downloaded"
 fi
 
