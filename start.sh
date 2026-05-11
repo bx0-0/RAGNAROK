@@ -64,6 +64,7 @@ clear
 echo ""
 
 # ─── Rainbow ASCII Banner ───
+# Using \x60 for backticks to avoid bash command-substitution parsing errors
 echo -e "${RED} _  .-')     ('-.                     .-') _    ('-.     _  .-')               .-. .-')   ${NC}"
 echo -e "${RED} ( \( -O )   ( OO ).-.                ( OO ) )  ( OO ).-.( \( -O )              \  ( OO )   ${NC}"
 echo -e "${GREEN}  ,------.   / . --. /  ,----.    ,--./ ,--,'   / . --. / ,------.  .-'),-----. ,--. ,--.   ${NC}"
@@ -71,14 +72,11 @@ echo -e "${GREEN}  |   /`. '  | \-.  \  '  .-./-') |   \ |  |\   | \-.  \  |   /
 echo -e "${YELLOW}  |  /  | |.-'-'  |  | |  |_( O- )|    \|  | ).-'-'  |  | |  /  | |/   |  | |  ||      /,  ${NC}"
 echo -e "${YELLOW}  |  |_.' | \| |_.'  | |  | .--, \|  .     |/  \| |_.'  | |  |_.' |\_) |  |\|  ||     ' _) ${NC}"
 echo -e "${BLUE}  |  .  '.'  |  .-.  |(|  | '. (_/|  |\    |    |  .-.  | |  .  '.'  \ |  | |  ||  .   \   ${NC}"
-echo -e "${BLUE}  |  |\  \   |  | |  | |  '--'  | |  | \   |    |  | |  | |  |\  \    \`'  '-'  '|  |\   \  ${NC}"
-echo -e "${MAGENTA}  \`--' '--'  \`--' \`--'  \`------'  \`--'  \`--'    \`--' \`--' \`--' '--'     \`-----' \`--' '--' ${NC}"
+echo -e "${BLUE}  |  |\  \   |  | |  | |  '--'  | |  | \   |    |  | |  | |  |\  \    \x60'  '-'  '|  |\   \  ${NC}"
+echo -e "${MAGENTA}  \x60--' '--'  \x60--' \x60--'  \x60------'  \x60--'  \x60--'    \x60--' \x60--' \x60--' '--'     \x60-----' \x60--' '--' ${NC}"
 echo ""
-echo -e "  ${DIM}╭────────═══────═══════════───═══──────────═══───╮${NC}"
-echo -e "  ${DIM}│${CYAN}${BOLD} Model:${DIM}    ${GREEN}${MODEL_NAME}                              ${CYAN}${BOLD}Port:${DIM}    ${YELLOW}${PORT}${NC}${DIM}      │${NC}"
-echo -e "  ${DIM}│${CYAN}${BOLD} Context:${DIM}  ${GREEN}${NUM_CTX}                               ${CYAN}${BOLD}GPU:${DIM}     ${YELLOW}${NUM_GPU}${NC}${DIM}       │${NC}"
-echo -e "  ${DIM}│${CYAN}${BOLD} Threads:${DIM}  ${GREEN}${MAX_CONCURRENT}                               ${CYAN}${BOLD}Flash:${DIM}   ${YELLOW}${FLASH_ATTN}${NC}${DIM}      │${NC}"
-echo -e "  ${DIM}╰────────═══────═══════════───═══──────────═══───╯${NC}"
+echo -e "  ${DIM}Model: ${GREEN}${MODEL_NAME}${DIM}    |    Port: ${YELLOW}${PORT}${NC}"
+echo -e "  ${DIM}Context: ${GREEN}${NUM_CTX}${DIM}    |    GPU: ${YELLOW}${NUM_GPU}${DIM}    |    Threads: ${GREEN}${MAX_CONCURRENT}${DIM}    |    Flash: ${YELLOW}${FLASH_ATTN}${NC}"
 echo ""
 
 # ─── Step 1 ───
