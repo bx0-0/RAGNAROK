@@ -87,30 +87,16 @@ if [ -n "$PUBLIC_URL" ]; then
     ) &
 
     echo ""
-    if command -v toilet &>/dev/null; then
-        CENTERED=$(toilet -f rainbow3 "ONLINE" 2>/dev/null)
-        echo -e "${MAGENTA}${BOLD}  ╔═════════════════════════════════════════════════════════╗${NC}"
-        echo -e "  ║${CENTERED}                                                     ║"
-        echo -e "${MAGENTA}${BOLD}  ╠═════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${MAGENTA}${BOLD}  ║${NC}${CYAN}${BOLD}  Endpoint:${DIM}  ${YELLOW}${PUBLIC_URL}/v1                                 ║${NC}"
-        echo -e "${MAGENTA}${BOLD}  ║${NC}${CYAN}${BOLD}  Model:${DIM}     ${GREEN}${MODEL_NAME:-qwen3:8b}                                            ║${NC}"
-        echo -e "${MAGENTA}${BOLD}  ║${NC}${CYAN}${BOLD}  Port:${DIM}      ${WHITE}${PORT:-8000}                                            ║${NC}"
-        echo -e "${MAGENTA}${BOLD}  ╠═════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${MAGENTA}${BOLD}  ║${NC}                                                                  ║${NC}"
-        echo -e "${MAGENTA}${BOLD}  ║${NC}${DIM}  curl ${YELLOW}${PUBLIC_URL}/v1/models${NC}                                 ║${NC}"
-        echo -e "${MAGENTA}${BOLD}  ╚═════════════════════════════════════════════════════════╝${NC}"
-    else
-        echo -e "${MAGENTA}${BOLD}  ╔══════════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${MAGENTA}${BOLD}  ║${GREEN}              🔥  RAGNAROK IS ONLINE  🔥              ${MAGENTA}║${NC}"
-        echo -e "${MAGENTA}${BOLD}  ╠══════════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${MAGENTA}${BOLD}  ║${WHITE}${DIM}  Endpoint:${NC}${WHITE}  ${YELLOW}${PUBLIC_URL}/v1                           ${MAGENTA}║${NC}"
-        echo -e "${MAGENTA}${BOLD}  ║${WHITE}${DIM}  Model:${NC}${WHITE}     ${GREEN}${MODEL_NAME:-qwen3:8b}                                      ${MAGENTA}║${NC}"
-        echo -e "${MAGENTA}${BOLD}  ║${WHITE}${DIM}  Port:${NC}${WHITE}      ${CYAN}${PORT:-8000}                                      ${MAGENTA}║${NC}"
-        echo -e "${MAGENTA}${BOLD}  ╠══════════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${MAGENTA}${BOLD}  ║${NC}                                                          ${MAGENTA}${BOLD}║${NC}"
-        echo -e "${MAGENTA}${BOLD}  ║${CYAN}  curl ${PUBLIC_URL}/v1/models${NC}                              ${MAGENTA}${BOLD}║${NC}"
-        echo -e "${MAGENTA}${BOLD}  ╚══════════════════════════════════════════════════════════════════╝${NC}"
-    fi
+    echo -e "${MAGENTA}${BOLD}  ╔══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${GREEN}${BOLD}              🔥  RAGNAROK IS ONLINE  🔥              ${MAGENTA}║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ╠══════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${NC}${CYAN}${BOLD}  Endpoint:${DIM}  ${YELLOW}${PUBLIC_URL}/v1                                   ║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${NC}${CYAN}${BOLD}  Model:${DIM}     ${GREEN}${MODEL_NAME:-qwen3:8b}                                              ║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${NC}${CYAN}${BOLD}  Port:${DIM}      ${WHITE}${PORT:-8000}                                              ║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ╠══════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${NC}                                                         ║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ║${NC}${DIM}  curl ${YELLOW}${PUBLIC_URL}/v1/models${NC}                                  ║${NC}"
+    echo -e "${MAGENTA}${BOLD}  ╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
     # If verbose-log enabled, tail the request log live in the cell
