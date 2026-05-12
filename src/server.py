@@ -397,6 +397,8 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
         has_tool_calls = False
         prompt_tokens = completion_tokens = 0
         created = int(time.time())
+        last_data_time = time.monotonic()
+        PING_INTERVAL = 15
 
         try:
             async with state.http_client.stream(
@@ -409,6 +411,11 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
                     return
 
                 async for line in response.aiter_lines():
+                    now = time.monotonic()
+                    if now - last_data_time > PING_INTERVAL:
+                        yield b": ping\n\n"
+                        last_data_time = now
+
                     if not line.strip():
                         continue
                     try:
@@ -443,6 +450,8 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
                     if not delta and not data.get("done"):
                         continue
 
+                    last_data_time = time.monotonic()
+
                     yield (
                         b"data: "
                         + _json_dumps({
@@ -463,7 +472,7 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
                         prompt_tokens = data.get("prompt_eval_count", 0)
                         completion_tokens = data.get("eval_count", 0)
 
-                        # Final chunk with finish_reason
+                        # Final chunk with finish_reason and usage
                         yield (
                             b"data: "
                             + _json_dumps({
@@ -476,6 +485,11 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
                                     "index": 0,
                                     "finish_reason": "tool_calls" if has_tool_calls else "stop",
                                 }],
+                                "usage": {
+                                    "prompt_tokens": prompt_tokens,
+                                    "completion_tokens": completion_tokens,
+                                    "total_tokens": prompt_tokens + completion_tokens,
+                                },
                             }).encode()
                             + b"\n\n"
                         )
