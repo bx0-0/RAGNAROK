@@ -13,6 +13,15 @@ PORT="${PORT:-8000}"
 URL_FILE="/tmp/kaggle-ollama-url.txt"
 rm -f "$URL_FILE"
 
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+BOLD='\033[1m'
+DIM='\033[2m'
+WHITE='\033[1;37m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
 # ---- Health check: wait for server ----
 echo -ne "  ├─ Waiting for server on port $PORT"
 SERVER_READY=0
@@ -53,6 +62,23 @@ else
     echo " ✅"
 fi
 
+# ---- Show model status ----
+echo -ne "  ├─ Checking model status"
+OLLAMA_PS=$(ollama ps 2>/dev/null)
+if [ -n "$OLLAMA_PS" ]; then
+    echo " ✅"
+    echo ""
+    echo -e "  ${CYAN}${BOLD}┌── Loaded Model${NC}"
+    HEADR=$(echo "$OLLAMA_PS" | head -1)
+    echo -e "  ${CYAN}${BOLD}│${NC} ${DIM}${HEADR}${NC}"
+    BODY=$(echo "$OLLAMA_PS" | tail -n +2)
+    echo -e "  ${CYAN}${BOLD}│${NC} ${GREEN}${BODY}${NC}"
+    echo -e "  ${CYAN}${BOLD}└──────────────────${NC}"
+    echo ""
+else
+    echo " ⚠️"
+fi
+
 # ---- Start tunnel and capture URL ----
 echo -ne "  ├─ Starting Cloudflare tunnel"
 
@@ -88,15 +114,6 @@ done
 
 if [ -n "$PUBLIC_URL" ]; then
     echo " ✅"
-
-    GREEN='\033[0;32m'
-    CYAN='\033[0;36m'
-    MAGENTA='\033[0;35m'
-    BOLD='\033[1m'
-    DIM='\033[2m'
-    WHITE='\033[1;37m'
-    YELLOW='\033[1;33m'
-    NC='\033[0m'
 
     # Watchdog in background
     (
