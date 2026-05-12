@@ -14,25 +14,27 @@ URL_FILE="/tmp/kaggle-ollama-url.txt"
 rm -f "$URL_FILE"
 
 # ---- Health check: wait for server ----
-echo "  ├─ Waiting for server on port $PORT..."
+echo -ne "  ├─ Waiting for server on port $PORT"
 SERVER_READY=0
 for i in $(seq 1 30); do
+    sleep 2
+    printf "\033[0;36m.\033[0m"
     if curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/v1/models" 2>/dev/null | grep -qE "200|429"; then
         SERVER_READY=1
         break
     fi
-    sleep 2
 done
 
 if [ "$SERVER_READY" -ne 1 ]; then
+    echo ""
     echo "  ❌ Server not responding on port $PORT after 60s"
     echo "  Check: curl http://localhost:$PORT/v1/models"
     exit 1
 fi
-echo "  ✅ Server is responding"
+echo " ✅"
 
 # ---- Wait for model warmup ----
-echo "  ├─ Waiting for model warmup..."
+echo -ne "  ├─ Waiting for model warmup"
 WARM_READY=0
 for i in $(seq 1 180); do
     STATUS=$(curl -s "http://localhost:$PORT/health" 2>/dev/null | grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
@@ -41,22 +43,25 @@ for i in $(seq 1 180); do
         break
     fi
     sleep 2
+    printf "\033[0;36m.\033[0m"
 done
 
 if [ "$WARM_READY" -ne 1 ]; then
+    echo ""
     echo "  ⚠️  Model warmup didn't finish in time — proceeding anyway"
 else
-    echo "  ✅ Model is warm and ready"
+    echo " ✅"
 fi
 
 # ---- Start tunnel and capture URL ----
-echo "  ├─ Starting Cloudflare tunnel..."
+echo -ne "  ├─ Starting Cloudflare tunnel"
 
 ./cloudflared tunnel --url "http://localhost:${PORT}" > /tmp/cloudflared.log 2>&1 &
 TUNNEL_PID=$!
 sleep 2
 
 if ! kill -0 $TUNNEL_PID 2>/dev/null; then
+    echo ""
     echo "  ❌ cloudflared failed to start"
     cat /tmp/cloudflared.log
     exit 1
@@ -78,18 +83,21 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
     fi
     sleep 2
     ELAPSED=$((ELAPSED + 2))
+    printf "\033[0;36m.\033[0m"
 done
 
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
-BOLD='\033[1m'
-DIM='\033[2m'
-WHITE='\033[1;37m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
 if [ -n "$PUBLIC_URL" ]; then
+    echo " ✅"
+
+    GREEN='\033[0;32m'
+    CYAN='\033[0;36m'
+    MAGENTA='\033[0;35m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    WHITE='\033[1;37m'
+    YELLOW='\033[1;33m'
+    NC='\033[0m'
+
     # Watchdog in background
     (
         while true; do
@@ -131,6 +139,7 @@ if [ -n "$PUBLIC_URL" ]; then
         while true; do sleep 60; done
     fi
 else
+    echo ""
     echo "❌ Failed to get tunnel URL within ${TIMEOUT}s"
     echo "   Log output:"
     cat /tmp/cloudflared.log 2>/dev/null | tail -20
