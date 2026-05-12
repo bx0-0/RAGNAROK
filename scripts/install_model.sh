@@ -8,12 +8,18 @@ set -e
 MODEL="${MODEL_NAME:-qwen3:8b}"
 
 echo "  ├─ Stopping any existing Ollama..."
-pkill ollama 2>/dev/null || true
-sleep 2
+if pgrep ollama >/dev/null 2>&1; then
+    pkill ollama
+    sleep 2
+fi
 
 echo "  ├─ Starting Ollama serve..."
-ollama serve > /dev/null 2>&1 &
-sleep 3
+if ! pgrep ollama >/dev/null 2>&1; then
+    ollama serve > /dev/null 2>&1 &
+    sleep 3
+else
+    echo "  │  ℹ️  Ollama already running"
+fi
 
 echo "  ├─ Pulling model: $MODEL"
 if ollama list | grep -q "^$MODEL "; then

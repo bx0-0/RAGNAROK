@@ -13,6 +13,3 @@ def setup_logging(debug=None):
         format="<green>{time:HH:mm:ss}</green> | <level>{level:<8}</level> | {message}",
         level=level,
     )
-    return logger
-
-logger = setup_logging()

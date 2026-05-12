@@ -104,7 +104,7 @@ fi
 
 echo -ne "  ${DIM}Waiting for server${NC}"
 READY=0
-for i in $(seq 1 60); do
+for i in $(seq 1 30); do
     sleep 2
     printf "${CYAN}.${NC}"
     if curl -s -o /dev/null -w "%{http_code}" "http://localhost:${PORT}/v1/models" 2>/dev/null | grep -q "200"; then

@@ -6,8 +6,9 @@
 set -e
 
 echo "  ├─ Cleaning old processes..."
-pkill -f cloudflared 2>/dev/null || true
-fuser -k 8000/tcp 2>/dev/null || true
+if pgrep -f cloudflared >/dev/null 2>&1; then pkill -f cloudflared; fi
+if pgrep -f "src.server" >/dev/null 2>&1; then pkill -f "src.server"; fi
+if fuser 8000/tcp >/dev/null 2>&1; then fuser -k 8000/tcp; fi
 rm -f cloudflared 2>/dev/null || true
 
 echo "  ├─ Installing zstd (required by Ollama)..."
