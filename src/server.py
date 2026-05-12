@@ -213,7 +213,8 @@ async def lifespan(app: FastAPI):
 
     banner = (
         f"\n{'='*60}\n"
-        f"  \033[1m\033[0;32mKaggle Ollama Gateway\033[0m\n"
+        f"  \033[1m\033[0;31m🐉 RAGNAROK\033[0m\n"
+        f"  \033[1m\033[0;36mGPU Model Gateway\033[0m\n"
         f"{'='*60}\n"
         f"  \033[0;90mModel:\033[0m     {MODEL_NAME}\n"
         f"  \033[0;90mPort:\033[0m      {PORT}\n"
