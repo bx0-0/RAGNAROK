@@ -126,6 +126,34 @@ def log_request(req_id, method, path, status, duration, tokens_in, tokens_out, e
         f.write(line + "\n")
         f.flush()
 
+async def _background_warmup():
+    try:
+        warmup_payload = {
+            "model": MODEL_NAME,
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
+            "keep_alive": KEEP_ALIVE,
+            "options": {
+                "num_ctx": NUM_CTX,
+                "num_predict": 1,
+                "num_batch": NUM_BATCH,
+                "flash_attn": FLASH_ATTN,
+                "num_gpu": NUM_GPU,
+            },
+        }
+        async with http_client.stream(
+            "POST", f"{OLLAMA_BASE_URL}/api/chat", json=warmup_payload, timeout=300.0
+        ) as resp:
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                data = _json_loads(line)
+                if data.get("done"):
+                    break
+        logger.info("Model is warm and ready!")
+    except Exception as e:
+        logger.warning(f"Warm-up skipped: {e}")
+
 _print_to_stdout = VERBOSE_LOG  # Mirror env flag
 
 @asynccontextmanager
@@ -153,33 +181,8 @@ async def lifespan(app: FastAPI):
         ),
     )
 
-    logger.info(f"Warming up model '{MODEL_NAME}'...")
-    try:
-        warmup_payload = {
-            "model": MODEL_NAME,
-            "messages": [{"role": "user", "content": "hi"}],
-            "stream": True,
-            "keep_alive": KEEP_ALIVE,
-            "options": {
-                "num_ctx": NUM_CTX,
-                "num_predict": 1,
-                "num_batch": NUM_BATCH,
-                "flash_attn": FLASH_ATTN,
-                "num_gpu": NUM_GPU,
-            },
-        }
-        async with http_client.stream(
-            "POST", f"{OLLAMA_BASE_URL}/api/chat", json=warmup_payload, timeout=300.0
-        ) as resp:
-            async for line in resp.aiter_lines():
-                if not line.strip():
-                    continue
-                data = _json_loads(line)
-                if data.get("done"):
-                    break
-        logger.info("Model is warm and ready!")
-    except Exception as e:
-        logger.warning(f"Warm-up skipped: {e}")
+    logger.info(f"Warming up model '{MODEL_NAME}' in background...")
+    asyncio.create_task(_background_warmup())
 
     yield
     try:
