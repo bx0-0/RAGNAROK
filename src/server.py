@@ -102,7 +102,7 @@ async def _enqueue_log(line: str):
         pass
 
 
-def _build_log_line(tag, req_id, status_or_method, extra, **kw):
+def _build_log_line(tag, req_id, status_or_method, path=None, extra=None, **kw):
     ts = time.strftime("%H:%M:%S")
     line = f"\033[0;36m[{ts}]\033[0m \033[0;90m{tag}\033[0m \033[1m{req_id}\033[0m "
     if "duration" in kw:
@@ -114,9 +114,9 @@ def _build_log_line(tag, req_id, status_or_method, extra, **kw):
             f"\033[0;90mt:{kw['t_in']}→{kw['t_out']}\033[0m"
         )
     else:
-        line += f"{status_or_method} {extra}"
-    if kw.get("extra"):
-        line += f"  \033[0;33m{kw['extra']}\033[0m"
+        line += f"{status_or_method} {path}"
+    if extra:
+        line += f"  \033[0;33m{extra}\033[0m"
     return line
 
 
@@ -136,7 +136,7 @@ async def log_request(req_id, method, path, status, duration, t_in, t_out, extra
     if len(_request_log) > _MAX_LOG_ENTRIES:
         _request_log.pop(0)
     line = _build_log_line(
-        "▶", req_id, status, extra,
+        "▶", req_id, status, path,
         duration=duration, t_in=t_in, t_out=t_out, extra=extra,
     )
     if VERBOSE_LOG:
