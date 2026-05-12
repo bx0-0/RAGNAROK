@@ -82,7 +82,7 @@ fi
 # ---- Start tunnel and capture URL ----
 echo -ne "  ├─ Starting Cloudflare tunnel"
 
-./cloudflared tunnel --url "http://localhost:${PORT}" > /tmp/cloudflared.log 2>&1 &
+./cloudflared tunnel --url "http://localhost:${PORT}" --grace-period 300s > /tmp/cloudflared.log 2>&1 &
 TUNNEL_PID=$!
 sleep 2
 
@@ -121,7 +121,7 @@ if [ -n "$PUBLIC_URL" ]; then
             if ! kill -0 $TUNNEL_PID 2>/dev/null; then
                 echo "⚠️  Tunnel died, restarting in 10s..."
                 sleep 10
-                ./cloudflared tunnel --url "http://localhost:${PORT}" > /tmp/cloudflared.log 2>&1 &
+                ./cloudflared tunnel --url "http://localhost:${PORT}" --grace-period 300s > /tmp/cloudflared.log 2>&1 &
                 TUNNEL_PID=$!
                 sleep 5
             fi

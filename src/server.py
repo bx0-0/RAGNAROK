@@ -201,8 +201,8 @@ async def lifespan(app: FastAPI):
     state.http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(connect=60.0, read=900.0, write=60.0, pool=900.0),
         limits=httpx.Limits(
-            max_connections=200,
-            max_keepalive_connections=100,
+            max_connections=2000,
+            max_keepalive_connections=500,
             keepalive_expiry=300,
         ),
     )
@@ -391,14 +391,21 @@ async def _handle_non_stream(state, request, request_id, ollama_url, ollama_payl
     })
 
 
+def _suppress_task_exception(task):
+    try:
+        task.result()
+    except Exception:
+        pass
+
+
 def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start_time):
     async def stream_generator():
+        pending_task = None
         first_chunk = True
         has_tool_calls = False
         prompt_tokens = completion_tokens = 0
         created = int(time.time())
-        last_data_time = time.monotonic()
-        PING_INTERVAL = 15
+        KEEPALIVE_INTERVAL = 5
 
         try:
             async with state.http_client.stream(
@@ -410,11 +417,30 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
                     yield b"data: " + b'{"error":{"message":"Upstream error"}}' + b"\n\ndata: [DONE]\n\n"
                     return
 
-                async for line in response.aiter_lines():
-                    now = time.monotonic()
-                    if now - last_data_time > PING_INTERVAL:
-                        yield b": ping\n\n"
-                        last_data_time = now
+                aiter = response.aiter_lines()
+                pending_task = asyncio.ensure_future(aiter.__anext__())
+                pending_task.add_done_callback(_suppress_task_exception)
+
+                while True:
+                    done, _ = await asyncio.wait({pending_task}, timeout=KEEPALIVE_INTERVAL)
+
+                    if not done:
+                        yield (b"data: {" +
+                             b'"id":"keep-alive"' +
+                             b',"choices":[{"delta":{},"finish_reason":null}]}\n\n')
+                        continue
+
+                    try:
+                        line = pending_task.result()
+                    except StopAsyncIteration:
+                        break
+                    except Exception:
+                        break
+                    finally:
+                        pending_task = None
+
+                    pending_task = asyncio.ensure_future(aiter.__anext__())
+                    pending_task.add_done_callback(_suppress_task_exception)
 
                     if not line.strip():
                         continue
@@ -450,8 +476,6 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
                     if not delta and not data.get("done"):
                         continue
 
-                    last_data_time = time.monotonic()
-
                     yield (
                         b"data: "
                         + _json_dumps({
@@ -472,7 +496,6 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
                         prompt_tokens = data.get("prompt_eval_count", 0)
                         completion_tokens = data.get("eval_count", 0)
 
-                        # Final chunk with finish_reason and usage
                         yield (
                             b"data: "
                             + _json_dumps({
@@ -498,6 +521,8 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
         except Exception:
             pass
         finally:
+            if pending_task and not pending_task.done():
+                pending_task.cancel()
             elapsed = round(time.monotonic() - start_time, 2)
             await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
             logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
