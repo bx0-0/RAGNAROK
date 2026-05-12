@@ -31,6 +31,24 @@ if [ "$SERVER_READY" -ne 1 ]; then
 fi
 echo "  ✅ Server is responding"
 
+# ---- Wait for model warmup ----
+echo "  ├─ Waiting for model warmup..."
+WARM_READY=0
+for i in $(seq 1 180); do
+    STATUS=$(curl -s "http://localhost:$PORT/health" 2>/dev/null | grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+    if [ "$STATUS" = "ready" ]; then
+        WARM_READY=1
+        break
+    fi
+    sleep 2
+done
+
+if [ "$WARM_READY" -ne 1 ]; then
+    echo "  ⚠️  Model warmup didn't finish in time — proceeding anyway"
+else
+    echo "  ✅ Model is warm and ready"
+fi
+
 # ---- Start tunnel and capture URL ----
 echo "  ├─ Starting Cloudflare tunnel..."
 

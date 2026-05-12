@@ -151,6 +151,7 @@ class GatewayState:
         self.semaphore = asyncio.Semaphore(MAX_CONCURRENT)
         self.log_writer_task = None
         self.warmup_task = None
+        self.is_warm = False
 
 
 def _get_state(request: Request) -> GatewayState:
@@ -187,9 +188,11 @@ async def _warmup(state: GatewayState):
                     continue
                 if _json_loads(line).get("done"):
                     break
+        state.is_warm = True
         logger.info("Model is warm and ready!")
     except Exception as e:
         logger.warning(f"Warm-up skipped: {e}")
+        state.is_warm = True
 
 
 @contextlib.asynccontextmanager
@@ -205,6 +208,7 @@ async def lifespan(app: FastAPI):
     )
     state.log_writer_task = asyncio.create_task(_log_writer())
     state.warmup_task = asyncio.create_task(_warmup(state))
+
     app.state.gw = state
 
     banner = (
@@ -249,6 +253,15 @@ async def list_models():
             "object": "model",
             "owned_by": "local",
         }],
+    }
+
+
+@app.get("/health")
+async def health_check(request: Request):
+    state = _get_state(request)
+    return {
+        "status": "ready" if state.is_warm else "warming",
+        "model": MODEL_NAME,
     }
 
 
