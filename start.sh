@@ -76,7 +76,7 @@ echo -e "${BLUE}  |  |\  \   |  | |  | |  '--'  | |  | \   |    |  | |  | |  |\ 
 echo -e "${MAGENTA}  \x60--' '--'  \x60--' \x60--'  \x60------'  \x60--'  \x60--'    \x60--' \x60--' \x60--' '--'     \x60-----' \x60--' '--' ${NC}"
 echo ""
 echo -e "  ${CYAN}${BOLD}GPU Model Gateway${NC}"
-echo -e "  ${DIM}Run Ollama on Kaggle GPUs with a public OpenAI-compatible API${NC}"
+echo -e "  ${DIM}Run Ollama on Kaggle & Colab GPUs with a public OpenAI-compatible API${NC}"
 echo ""
 echo -e "  ${DIM}Model: ${GREEN}${MODEL_NAME}${DIM}    |    Port: ${YELLOW}${PORT}${NC}"
 echo -e "  ${DIM}Context: ${GREEN}${NUM_CTX}${DIM}    |    GPU: ${YELLOW}${NUM_GPU}${DIM}    |    Threads: ${GREEN}${MAX_CONCURRENT}${DIM}    |    Flash: ${YELLOW}${FLASH_ATTN}${NC}"
