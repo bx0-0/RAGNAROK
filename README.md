@@ -1,27 +1,36 @@
-# Kaggle Ollama Gateway
+<p align="center">
+  <img src="cc.svg" alt="RAGNAROK" width="400">
+</p>
 
-Run powerful open-source LLMs on **free Kaggle GPUs** with a public OpenAI-compatible API endpoint.
+<h1 align="center">🐉 RAGNAROK</h1>
+<p align="center">
+  <em>GPU Model Gateway</em> — Run powerful open-source LLMs on <strong>free Kaggle GPUs</strong> with a public OpenAI-compatible API endpoint.
+</p>
+
+<div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![Kaggle](https://img.shields.io/badge/runs%20on-Kaggle-20BEFF)](https://www.kaggle.com)
+[![Colab](https://img.shields.io/badge/runs%20on-Colab-F9AB00)](https://colab.research.google.com)
+</div>
 
 ---
 
-## What does this do?
+## ⚡ What does this do?
 
-1. Runs **Ollama** inside a Kaggle Notebook (free 2x T4 GPUs, 30GB VRAM)
+1. Runs **Ollama** inside Kaggle/Colab Notebooks (free GPUs)
 2. Wraps Ollama's API with an **OpenAI-compatible** endpoint
 3. Exposes it publicly via a **Cloudflare Tunnel**
-4. You get a working `https://...trycloudflare.com/v1` endpoint for any OpenAI-compatible tool
+4. You get a working `https://.trycloudflare.com/v1` endpoint for any OpenAI-compatible tool
 
 Works with: **Claude Code, Codex, OpenCode, Cursor, VSCode AI extensions**, and any OpenAI agent framework.
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
-### On Kaggle
+### On Kaggle / Colab
 
 ```bash
 git clone https://github.com/yourusername/kaggle-ollama-gateway.git
@@ -56,7 +65,7 @@ curl -X POST https://YOUR-URL.trycloudflare.com/v1/chat/completions \
 
 ---
 
-## Project Structure
+## 📁 Project Structure
 
 ```
 kaggle-ollama-gateway/
@@ -82,7 +91,7 @@ kaggle-ollama-gateway/
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
 Edit `config/settings.env`:
 
@@ -113,7 +122,7 @@ bash start.sh --model llama3.3:70b --max-concurrent 2 --num-ctx 32768
 
 ---
 
-## Supported Models (Kaggle T4 friendly)
+## 🤖 Supported Models (Kaggle T4 friendly)
 
 | Model | Size | Quality | Load Time |
 |-------|------|---------|-----------|
@@ -125,7 +134,7 @@ bash start.sh --model llama3.3:70b --max-concurrent 2 --num-ctx 32768
 
 ---
 
-## Examples
+## 💻 Examples
 
 ### Claude Code
 
@@ -158,10 +167,29 @@ See `examples/` for more.
 
 ---
 
-## Troubleshooting
+## 🖥️ Platform Support
+
+### Kaggle (Recommended)
+- **GPU:** 2x T4 (30GB VRAM)
+- **Session:** Up to 30 hours
+- **No restrictions** on cloudflared
+
+### Google Colab (Free Tier)
+- **GPU:** 1x T4 (15GB VRAM)
+- **Session:** Up to 12 hours, auto-disconnects
+- **Tip:** Use smaller models (7B-8B) and lower `--num-ctx` (16384-32768)
+
+```bash
+# Colab-friendly settings
+bash start.sh --model qwen3:8b --num-ctx 32768
+```
+
+---
+
+## 🔧 Troubleshooting
 
 ### Model fails to download
-- Check Kaggle internet: `!ping -c 1 ollama.com`
+- Check internet: `!ping -c 1 ollama.com`
 - Retry: `bash scripts/install_model.sh`
 - Try a smaller model
 
@@ -186,6 +214,6 @@ fuser -k 8000/tcp
 
 ---
 
-## License
+## 📜 License
 
 MIT
