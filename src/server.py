@@ -315,6 +315,10 @@ async def openai_completions(request: Request):
     is_streaming = body.get("stream", False)
     ollama_messages = convert_messages_to_ollama(body.get("messages", []))
 
+    print(f"[DBG {request_id}] body keys={list(body.keys())} stream={is_streaming} msgs={len(ollama_messages)}", flush=True)
+    print(f"[DBG {request_id}] ollama_messages={ollama_messages}", flush=True)
+    print(f"[DBG {request_id}] payload model={MODEL_NAME}", flush=True)
+
     msg_count = len(ollama_messages)
     total_chars = sum(len(m.get("content", "")) if isinstance(m.get("content"), str) else 0 for m in ollama_messages)
     logger.info(f"[{request_id}] {msg_count} msgs, ~{total_chars} chars, stream={is_streaming}")
@@ -435,6 +439,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                 "POST", OLLAMA_CHAT_URL,
                 json=ollama_payload,
             ) as response:
+                print(f"[DBG {request_id}] Ollama status={response.status_code}", flush=True)
                 if response.status_code != 200:
                     elapsed = round(time.monotonic() - start_time, 2)
                     await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
@@ -444,15 +449,15 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                 async for line in response.aiter_lines():
                     if not line.strip():
                         continue
-                    logger.info(f"[{request_id}] RAW: {line[:300]}")
+                    print(f"[DBG {request_id}] RAW Ollama line: {line[:300]}", flush=True)
                     try:
                         data = orjson.loads(line)
                     except Exception as e:
-                        logger.error(f"[{request_id}] Parse fail: {e} | line={line[:100]}")
+                        print(f"[DBG {request_id}] Parse fail: {e} | line={line[:100]}", flush=True)
                         continue
 
                     if data.get("error"):
-                        logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
+                        print(f"[DBG {request_id}] Ollama error: {data.get('error')}", flush=True)
                         yield b"data: " + orjson.dumps({"error": {"message": data["error"]}}) + b"\n\n"
                         break
 
@@ -480,6 +485,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                             del delta["content"]
 
                     if not delta and not data.get("done"):
+                        print(f"[DBG {request_id}] Skipping empty chunk, data keys={list(data.keys())}", flush=True)
                         continue
 
                     yield b"data: " + orjson.dumps({
