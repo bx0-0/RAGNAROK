@@ -443,17 +443,30 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     yield _SSE_UPSTREAM_ERR
                     return
 
-                aiter = response.aiter_lines()
+                line_queue = asyncio.Queue()
+
+                async def _reader():
+                    try:
+                        async for raw in response.aiter_lines():
+                            if raw.strip():
+                                await line_queue.put(raw)
+                    except Exception as exc:
+                        logger.error(f"[{request_id}] Reader died: {exc}")
+                    finally:
+                        await line_queue.put(None)
+
+                task = asyncio.create_task(_reader())
+
                 while True:
                     try:
-                        line = await asyncio.wait_for(aiter.__anext__(), timeout=5.0)
+                        line = await asyncio.wait_for(line_queue.get(), timeout=5.0)
                     except asyncio.TimeoutError:
                         yield _SSE_KEEPALIVE
                         continue
-                    except StopAsyncIteration:
+
+                    if line is None:
                         break
-                    if not line.strip():
-                        continue
+
                     logger.debug(f"[{request_id}] RAW Ollama: {line[:300]}")
                     try:
                         data = orjson.loads(line)
@@ -525,6 +538,12 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                             },
                         }) + b"\n\n"
                         break
+
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         except Exception as e:
             import traceback
