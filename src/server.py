@@ -425,7 +425,6 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
     request_id_bytes = f"chatcmpl-{request_id}".encode()
 
     async def stream_generator():
-        pending_task = None
         first_chunk = True
         has_tool_calls = False
         prompt_tokens = completion_tokens = 0
@@ -442,37 +441,14 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     yield _SSE_UPSTREAM_ERR
                     return
 
-                aiter = response.aiter_lines()
-                pending_task = asyncio.ensure_future(aiter.__anext__())
-                pending_task.add_done_callback(_suppress_task_exception)
-
-                while True:
-                    done, _ = await asyncio.wait({pending_task}, timeout=2)
-
-                    if not done:
-                        yield _SSE_KEEPALIVE
-                        continue
-
-                    try:
-                        line = pending_task.result()
-                    except StopAsyncIteration:
-                        logger.warning(f"[{request_id}] Stream ended unexpectedly")
-                        break
-                    except Exception as e:
-                        logger.error(f"[{request_id}] Stream error: {e}")
-                        break
-                    finally:
-                        pending_task = None
-
-                    pending_task = asyncio.ensure_future(aiter.__anext__())
-                    pending_task.add_done_callback(_suppress_task_exception)
-
+                async for line in response.aiter_lines():
                     if not line.strip():
                         continue
                     try:
                         data = orjson.loads(line)
                     except Exception:
                         continue
+
                     if data.get("error"):
                         logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
                         yield b"data: " + orjson.dumps({"error": {"message": data["error"]}}) + b"\n\n"
@@ -504,7 +480,6 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     if not delta and not data.get("done"):
                         continue
 
-                    # orjson.dumps returns bytes directly — no decode/encode round-trip
                     yield b"data: " + orjson.dumps({
                         "id": request_id_bytes,
                         "object": "chat.completion.chunk",
@@ -542,8 +517,6 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
         except Exception:
             pass
         finally:
-            if pending_task and not pending_task.done():
-                pending_task.cancel()
             elapsed = round(time.monotonic() - start_time, 2)
             await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
             logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
