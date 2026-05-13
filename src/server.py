@@ -74,7 +74,7 @@ _BAD_JSON_RESPONSE = JSONResponse(status_code=400, content={"error": "Invalid JS
 
 # ─── Async-safe log queue (non-blocking) ───
 _log_queue = asyncio.Queue(maxsize=200)
-_request_log = deque(maxsize=50)
+_request_log = []
 
 
 def _status_color(code):
