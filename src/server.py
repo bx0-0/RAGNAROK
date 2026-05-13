@@ -499,6 +499,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                             "finish_reason": None,
                         }],
                     }) + b"\n\n"
+                    print(f"[DBG {request_id}] Yielded chunk: delta={delta}", flush=True)
 
                     if data.get("done"):
                         prompt_tokens = data.get("prompt_eval_count", 0)
@@ -522,7 +523,10 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         }) + b"\n\n"
                         break
 
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"[DBG {request_id}] STREAM CRASH: {e}", flush=True)
+            traceback.print_exc()
             pass
         finally:
             elapsed = round(time.monotonic() - start_time, 2)
