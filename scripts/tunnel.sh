@@ -88,7 +88,7 @@ sleep 3
 
 # Start with backoff retry for 429 rate limits
 start_tunnel() {
-    ./cloudflared tunnel --url "http://localhost:${PORT}" --metrics 0.0.0.0:8282 > /tmp/cloudflared.log 2>&1 &
+    ./cloudflared tunnel --url "http://localhost:${PORT}" --metrics 0.0.0.0:8282 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
     local pid=$!
     sleep 4
 
@@ -119,7 +119,7 @@ PUBLIC_URL=""
 
 while [ $ELAPSED -lt $TIMEOUT ]; do
     if [ -f /tmp/cloudflared.log ]; then
-        FOUND_URL=$(grep -oP 'https://[a-zA-Z0-9\-]+\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null | tail -1)
+        FOUND_URL=$(grep -oP 'https://[a-zA-Z0-9_\-]+\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null | tail -1)
         if [ -n "$FOUND_URL" ]; then
             PUBLIC_URL="$FOUND_URL"
             echo "$FOUND_URL" > "$URL_FILE"
@@ -172,12 +172,25 @@ if [ -n "$PUBLIC_URL" ]; then
                     sleep 30
                 fi
 
-                ./cloudflared tunnel --url "http://localhost:${PORT}" --metrics 0.0.0.0:8282 > /tmp/cloudflared.log 2>&1 &
+                ./cloudflared tunnel --url "http://localhost:${PORT}" --metrics 0.0.0.0:8282 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
                 TUNNEL_PID=$!
                 sleep 4
 
                 if kill -0 $TUNNEL_PID 2>/dev/null; then
-                    echo "  ✅ Tunnel restarted"
+                    # Extract new URL after restart
+                    NEW_URL=""
+                    for _u in $(seq 1 15); do
+                        NEW_URL=$(grep -oP 'https://[a-zA-Z0-9_\-]+\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null | tail -1 || true)
+                        if [ -n "$NEW_URL" ]; then break; fi
+                        sleep 2
+                    done
+
+                    if [ -n "$NEW_URL" ]; then
+                        echo "$NEW_URL" > "$URL_FILE"
+                        echo "  ✅ Tunnel restarted — NEW URL: ${NEW_URL}/v1"
+                    else
+                        echo "  ✅ Tunnel restarted (URL extraction failed, check logs)"
+                    fi
                 else
                     echo "  ❌ Tunnel restart failed"
                     cat /tmp/cloudflared.log | tail -10
