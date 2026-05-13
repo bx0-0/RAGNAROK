@@ -59,7 +59,6 @@ _OLLAMA_OPTS_WARMUP = {
 }
 
 # Precompute static SSE frame bytes
-_MODEL_NAME_BYTES = MODEL_NAME.encode()
 _SSE_DONE = b"data: [DONE]\n\n"
 _SSE_KEEPALIVE = b': ping\n\n'
 _SSE_UPSTREAM_ERR = b'data: {"error":{"message":"Upstream error"}}\n\ndata: [DONE]\n\n'
@@ -492,7 +491,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         "id": request_id_str,
                         "object": "chat.completion.chunk",
                         "created": created,
-                        "model": _MODEL_NAME_BYTES,
+                        "model": MODEL_NAME,
                         "choices": [{
                             "delta": delta,
                             "index": 0,
@@ -509,7 +508,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                             "id": request_id_str,
                             "object": "chat.completion.chunk",
                             "created": created,
-                            "model": _MODEL_NAME_BYTES,
+                            "model": MODEL_NAME,
                             "choices": [{
                                 "delta": {},
                                 "index": 0,
