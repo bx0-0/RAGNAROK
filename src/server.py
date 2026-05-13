@@ -418,7 +418,7 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time):
 def _suppress_task_exception(task):
     try:
         task.result()
-    except Exception:
+    except (asyncio.CancelledError, Exception):
         pass
 
 
