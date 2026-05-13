@@ -1,6 +1,5 @@
 import os
 import time
-import uuid
 import asyncio
 import contextlib
 
@@ -8,6 +7,7 @@ import orjson
 import httpx
 import uvloop
 import uvicorn
+from collections import deque
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,22 +30,51 @@ NUM_GPU = int(os.environ.get("NUM_GPU", "-1"))
 KEEP_ALIVE = os.environ.get("KEEP_ALIVE", "60m")
 PORT = int(os.environ.get("PORT", "8000"))
 OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
 REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")
+
+# Precompute ollama options (never changes at runtime)
+_OLLAMA_OPTS_BASE = orjson.dumps({
+    "num_ctx": NUM_CTX,
+    "num_batch": NUM_BATCH,
+    "flash_attn": FLASH_ATTN,
+    "num_gpu": NUM_GPU,
+}).decode()
+
+_OLLAMA_OPTS = orjson.dumps({
+    "num_ctx": NUM_CTX,
+    "num_batch": NUM_BATCH,
+    "flash_attn": FLASH_ATTN,
+    "num_gpu": NUM_GPU,
+    "num_predict": NUM_PREDICT,
+}).decode()
+
+_OLLAMA_OPTS_WARMUP = orjson.dumps({
+    "num_ctx": NUM_CTX,
+    "num_batch": NUM_BATCH,
+    "flash_attn": FLASH_ATTN,
+    "num_gpu": NUM_GPU,
+    "num_predict": 1,
+}).decode()
+
+# Precompute static SSE frame bytes
+_MODEL_NAME_BYTES = MODEL_NAME.encode()
+_SSE_DONE = b"data: [DONE]\n\n"
+_SSE_KEEPALIVE = b'data: {"id":"keep-alive","choices":[{"delta":{},"finish_reason":null}]}\n\n'
+_SSE_UPSTREAM_ERR = b'data: {"error":{"message":"Upstream error"}}\n\ndata: [DONE]\n\n'
+_RATE_LIMIT_RESPONSE = JSONResponse(status_code=429, content={
+    "error": {
+        "message": "Server is busy. Try again shortly.",
+        "type": "rate_limit_error",
+    },
+})
+_BAD_JSON_RESPONSE = JSONResponse(status_code=400, content={"error": "Invalid JSON"})
 
 
 # ─── Async-safe log queue (non-blocking) ───
 _log_queue = asyncio.Queue(maxsize=200)
-_MAX_LOG_ENTRIES = 50
-_request_log = []
-
-
-def _json_dumps(obj):
-    return orjson.dumps(obj).decode("utf-8")
-
-
-def _json_loads(text):
-    return orjson.loads(text)
+_request_log = deque(maxsize=50)
 
 
 def _status_color(code):
@@ -102,16 +131,16 @@ async def _enqueue_log(line: str):
         pass
 
 
-def _build_log_line(tag, req_id, status_or_method, path=None, extra=None, **kw):
+def _build_log_line(tag, req_id, status_or_method, path=None, extra=None, duration=None, t_in=None, t_out=None):
     ts = time.strftime("%H:%M:%S")
     line = f"\033[0;36m[{ts}]\033[0m \033[0;90m{tag}\033[0m \033[1m{req_id}\033[0m "
-    if "duration" in kw:
+    if duration is not None:
         color = _status_color(status_or_method)
         label = _status_label(status_or_method)
         line += (
             f"{color}{status_or_method} {label}\033[0m "
-            f"{kw['duration']}s "
-            f"\033[0;90mt:{kw['t_in']}→{kw['t_out']}\033[0m"
+            f"{duration}s "
+            f"\033[0;90mt:{t_in}\u2192{t_out}\033[0m"
         )
     else:
         line += f"{status_or_method} {path}"
@@ -133,8 +162,6 @@ async def log_request(req_id, method, path, status, duration, t_in, t_out, extra
         "status": status, "duration": duration,
         "t_in": t_in, "t_out": t_out, "extra": extra,
     })
-    if len(_request_log) > _MAX_LOG_ENTRIES:
-        _request_log.pop(0)
     line = _build_log_line(
         "▶", req_id, status, path,
         duration=duration, t_in=t_in, t_out=t_out, extra=extra,
@@ -144,8 +171,15 @@ async def log_request(req_id, method, path, status, duration, t_in, t_out, extra
     await _enqueue_log(line)
 
 
+# ─── Fast UUID (4 bytes = 8 hex chars) ───
+def _fast_id():
+    return os.urandom(4).hex()
+
+
 # ─── State ───
 class GatewayState:
+    __slots__ = ("http_client", "semaphore", "log_writer_task", "warmup_task", "is_warm")
+
     def __init__(self):
         self.http_client = None
         self.semaphore = asyncio.Semaphore(MAX_CONCURRENT)
@@ -158,35 +192,24 @@ def _get_state(request: Request) -> GatewayState:
     return request.app.state.gw
 
 
-def _ollama_options(num_predict=None):
-    opts = {
-        "num_ctx": NUM_CTX,
-        "num_batch": NUM_BATCH,
-        "flash_attn": FLASH_ATTN,
-        "num_gpu": NUM_GPU,
-    }
-    if num_predict is not None:
-        opts["num_predict"] = num_predict
-    return opts
-
-
 async def _warmup(state: GatewayState):
     try:
-        payload = {
+        payload = orjson.dumps({
             "model": MODEL_NAME,
             "messages": [{"role": "user", "content": "hi"}],
             "stream": True,
             "keep_alive": KEEP_ALIVE,
-            "options": _ollama_options(num_predict=1),
-        }
+            "options": _OLLAMA_OPTS_WARMUP,
+        })
         async with state.http_client.stream(
-            "POST", f"{OLLAMA_BASE_URL}/api/chat",
-            json=payload, timeout=300.0,
+            "POST", OLLAMA_CHAT_URL,
+            content=payload, headers={"Content-Type": "application/json"},
+            timeout=300.0,
         ) as resp:
             async for line in resp.aiter_lines():
                 if not line.strip():
                     continue
-                if _json_loads(line).get("done"):
+                if orjson.loads(line).get("done"):
                     break
         state.is_warm = True
         logger.info("Model is warm and ready!")
@@ -224,7 +247,7 @@ async def lifespan(app: FastAPI):
     )
     print(banner, flush=True)
     logger.info("FastAPI starting up...")
-    logger.info(f"Warming up model '{MODEL_NAME}' in background...")
+    logger.info(f"Warming up model '{MODEL_NAME}' in background. ..")
 
     yield
 
@@ -269,7 +292,7 @@ async def health_check(request: Request):
 @app.post("/v1/chat/completions")
 async def openai_completions(request: Request):
     state = _get_state(request)
-    request_id = uuid.uuid4().hex[:8]
+    request_id = _fast_id()
     start_time = time.monotonic()
 
     await log_request_start(request_id, "POST", "/v1/chat/completions")
@@ -280,50 +303,46 @@ async def openai_completions(request: Request):
     except asyncio.TimeoutError:
         logger.warning(f"[{request_id}] Rejected: busy")
         await log_request(request_id, "POST", "/v1/chat/completions", 429, 0, 0, 0, "RATE_LIMITED")
-        return JSONResponse(status_code=429, content={
-            "error": {
-                "message": "Server is busy. Try again shortly.",
-                "type": "rate_limit_error",
-            },
-        })
+        return _RATE_LIMIT_RESPONSE
 
+    # Parse body with orjson (faster than FastAPI's stdlib json)
     try:
-        body = await request.json()
+        body = orjson.loads(await request.body())
     except Exception:
         await log_request(request_id, "POST", "/v1/chat/completions", 400, 0, 0, 0, "BAD_JSON")
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON"})
+        return _BAD_JSON_RESPONSE
 
     is_streaming = body.get("stream", False)
     ollama_messages = convert_messages_to_ollama(body.get("messages", []))
 
     msg_count = len(ollama_messages)
-    total_chars = sum(len(str(m.get("content", ""))) for m in ollama_messages)
+    total_chars = sum(len(m.get("content", "")) if isinstance(m.get("content"), str) else 0 for m in ollama_messages)
     logger.info(f"[{request_id}] {msg_count} msgs, ~{total_chars} chars, stream={is_streaming}")
 
-    ollama_payload = {
+    # Build ollama payload with orjson
+    ollama_payload_dict = {
         "model": MODEL_NAME,
         "messages": ollama_messages,
         "stream": True,
         "keep_alive": KEEP_ALIVE,
-        "options": _ollama_options(num_predict=NUM_PREDICT),
+        "options": _OLLAMA_OPTS,
     }
-
-    if body.get("tools"):
-        ollama_payload["tools"] = body["tools"]
-    if body.get("tool_choice"):
-        ollama_payload["tool_choice"] = body["tool_choice"]
-
-    ollama_url = f"{OLLAMA_BASE_URL}/api/chat"
+    tools = body.get("tools")
+    if tools:
+        ollama_payload_dict["tools"] = tools
+    tool_choice = body.get("tool_choice")
+    if tool_choice:
+        ollama_payload_dict["tool_choice"] = tool_choice
 
     try:
         if not is_streaming:
-            return await _handle_non_stream(state, request, request_id, ollama_url, ollama_payload, start_time)
-        return _handle_stream(state, request, request_id, ollama_url, ollama_payload, start_time)
+            return await _handle_non_stream(state, request_id, ollama_payload_dict, start_time)
+        return _handle_stream(state, request_id, ollama_payload_dict, start_time)
     finally:
         state.semaphore.release()
 
 
-async def _handle_non_stream(state, request, request_id, ollama_url, ollama_payload, start_time):
+async def _handle_non_stream(state, request_id, ollama_payload, start_time):
     content_parts = []
     thinking_parts = []
     all_tool_calls = []
@@ -331,26 +350,31 @@ async def _handle_non_stream(state, request, request_id, ollama_url, ollama_payl
 
     try:
         async with state.http_client.stream(
-            "POST", ollama_url, json=ollama_payload,
+            "POST", OLLAMA_CHAT_URL,
+            content=orjson.dumps(ollama_payload),
+            headers={"Content-Type": "application/json"},
         ) as response:
             if response.status_code != 200:
                 err = await response.aread()
                 elapsed = round(time.monotonic() - start_time, 2)
                 await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
-                return JSONResponse(status_code=response.status_code, content=_json_loads(err.decode()))
+                return JSONResponse(status_code=response.status_code, content=orjson.loads(err))
 
             async for line in response.aiter_lines():
                 if not line.strip():
                     continue
-                data = _json_loads(line)
+                data = orjson.loads(line)
                 msg = data.get("message", {})
 
-                if msg.get("content"):
-                    content_parts.append(msg["content"])
-                if msg.get("thinking"):
-                    thinking_parts.append(msg["thinking"])
-                if msg.get("tool_calls"):
-                    all_tool_calls.extend(format_tool_calls_openai(msg["tool_calls"]))
+                content = msg.get("content")
+                if content:
+                    content_parts.append(content)
+                thinking = msg.get("thinking")
+                if thinking:
+                    thinking_parts.append(thinking)
+                tool_calls = msg.get("tool_calls")
+                if tool_calls:
+                    all_tool_calls.extend(format_tool_calls_openai(tool_calls))
 
                 if data.get("done"):
                     prompt_tokens = data.get("prompt_eval_count", 0)
@@ -398,23 +422,26 @@ def _suppress_task_exception(task):
         pass
 
 
-def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start_time):
+def _handle_stream(state, request_id, ollama_payload, start_time):
+    request_id_bytes = f"chatcmpl-{request_id}".encode()
+
     async def stream_generator():
         pending_task = None
         first_chunk = True
         has_tool_calls = False
         prompt_tokens = completion_tokens = 0
         created = int(time.time())
-        KEEPALIVE_INTERVAL = 5
 
         try:
             async with state.http_client.stream(
-                "POST", ollama_url, json=ollama_payload,
+                "POST", OLLAMA_CHAT_URL,
+                content=orjson.dumps(ollama_payload),
+                headers={"Content-Type": "application/json"},
             ) as response:
                 if response.status_code != 200:
                     elapsed = round(time.monotonic() - start_time, 2)
                     await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
-                    yield b"data: " + b'{"error":{"message":"Upstream error"}}' + b"\n\ndata: [DONE]\n\n"
+                    yield _SSE_UPSTREAM_ERR
                     return
 
                 aiter = response.aiter_lines()
@@ -422,12 +449,10 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
                 pending_task.add_done_callback(_suppress_task_exception)
 
                 while True:
-                    done, _ = await asyncio.wait({pending_task}, timeout=KEEPALIVE_INTERVAL)
+                    done, _ = await asyncio.wait({pending_task}, timeout=5)
 
                     if not done:
-                        yield (b"data: {" +
-                             b'"id":"keep-alive"' +
-                             b',"choices":[{"delta":{},"finish_reason":null}]}\n\n')
+                        yield _SSE_KEEPALIVE
                         continue
 
                     try:
@@ -445,7 +470,7 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
                     if not line.strip():
                         continue
                     try:
-                        data = _json_loads(line)
+                        data = orjson.loads(line)
                     except Exception:
                         continue
                     if data.get("error"):
@@ -465,10 +490,11 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
                     if content:
                         delta["content"] = content
 
-                    if message.get("tool_calls"):
+                    tool_calls = message.get("tool_calls")
+                    if tool_calls:
                         has_tool_calls = True
-                        delta["tool_calls"] = format_tool_calls_openai(message["tool_calls"])
-                        for tc in message["tool_calls"]:
+                        delta["tool_calls"] = format_tool_calls_openai(tool_calls)
+                        for tc in tool_calls:
                             logger.info(f"[{request_id}] Tool: {tc.get('function', {}).get('name', '?')}")
                         if "content" in delta and not delta["content"]:
                             del delta["content"]
@@ -476,46 +502,39 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
                     if not delta and not data.get("done"):
                         continue
 
-                    yield (
-                        b"data: "
-                        + _json_dumps({
-                            "id": f"chatcmpl-{request_id}",
-                            "object": "chat.completion.chunk",
-                            "created": created,
-                            "model": MODEL_NAME,
-                            "choices": [{
-                                "delta": delta,
-                                "index": 0,
-                                "finish_reason": None,
-                            }],
-                        }).encode()
-                        + b"\n\n"
-                    )
+                    # orjson.dumps returns bytes directly — no decode/encode round-trip
+                    yield b"data: " + orjson.dumps({
+                        "id": request_id_bytes,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": _MODEL_NAME_BYTES,
+                        "choices": [{
+                            "delta": delta,
+                            "index": 0,
+                            "finish_reason": None,
+                        }],
+                    }) + b"\n\n"
 
                     if data.get("done"):
                         prompt_tokens = data.get("prompt_eval_count", 0)
                         completion_tokens = data.get("eval_count", 0)
 
-                        yield (
-                            b"data: "
-                            + _json_dumps({
-                                "id": f"chatcmpl-{request_id}",
-                                "object": "chat.completion.chunk",
-                                "created": created,
-                                "model": MODEL_NAME,
-                                "choices": [{
-                                    "delta": {},
-                                    "index": 0,
-                                    "finish_reason": "tool_calls" if has_tool_calls else "stop",
-                                }],
-                                "usage": {
-                                    "prompt_tokens": prompt_tokens,
-                                    "completion_tokens": completion_tokens,
-                                    "total_tokens": prompt_tokens + completion_tokens,
-                                },
-                            }).encode()
-                            + b"\n\n"
-                        )
+                        yield b"data: " + orjson.dumps({
+                            "id": request_id_bytes,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": _MODEL_NAME_BYTES,
+                            "choices": [{
+                                "delta": {},
+                                "index": 0,
+                                "finish_reason": "tool_calls" if has_tool_calls else "stop",
+                            }],
+                            "usage": {
+                                "prompt_tokens": prompt_tokens,
+                                "completion_tokens": completion_tokens,
+                                "total_tokens": prompt_tokens + completion_tokens,
+                            },
+                        }) + b"\n\n"
                         break
 
         except Exception:
@@ -526,7 +545,7 @@ def _handle_stream(state, request, request_id, ollama_url, ollama_payload, start
             elapsed = round(time.monotonic() - start_time, 2)
             await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
             logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
-            yield b"data: [DONE]\n\n"
+            yield _SSE_DONE
 
     return StreamingResponse(
         stream_generator(),
