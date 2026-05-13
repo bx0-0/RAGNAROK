@@ -194,16 +194,16 @@ def _get_state(request: Request) -> GatewayState:
 
 async def _warmup(state: GatewayState):
     try:
-        payload = orjson.dumps({
+        payload = {
             "model": MODEL_NAME,
             "messages": [{"role": "user", "content": "hi"}],
             "stream": True,
             "keep_alive": KEEP_ALIVE,
             "options": _OLLAMA_OPTS_WARMUP,
-        })
+        }
         async with state.http_client.stream(
             "POST", OLLAMA_CHAT_URL,
-            content=payload, headers={"Content-Type": "application/json"},
+            json=payload,
             timeout=300.0,
         ) as resp:
             async for line in resp.aiter_lines():
@@ -351,8 +351,7 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time):
     try:
         async with state.http_client.stream(
             "POST", OLLAMA_CHAT_URL,
-            content=orjson.dumps(ollama_payload),
-            headers={"Content-Type": "application/json"},
+            json=ollama_payload,
         ) as response:
             if response.status_code != 200:
                 err = await response.aread()
@@ -435,8 +434,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
         try:
             async with state.http_client.stream(
                 "POST", OLLAMA_CHAT_URL,
-                content=orjson.dumps(ollama_payload),
-                headers={"Content-Type": "application/json"},
+                json=ollama_payload,
             ) as response:
                 if response.status_code != 200:
                     elapsed = round(time.monotonic() - start_time, 2)
