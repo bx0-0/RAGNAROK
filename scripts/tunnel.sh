@@ -82,9 +82,9 @@ fi
 # ---- Start tunnel and capture URL ----
 echo -ne "  ├─ Starting Cloudflare tunnel"
 
-./cloudflared tunnel --url "http://localhost:${PORT}" --grace-period 300s > /tmp/cloudflared.log 2>&1 &
+./cloudflared tunnel --url "http://localhost:${PORT}" --metrics 0.0.0.0:8282 > /tmp/cloudflared.log 2>&1 &
 TUNNEL_PID=$!
-sleep 2
+sleep 3
 
 if ! kill -0 $TUNNEL_PID 2>/dev/null; then
     echo ""
@@ -117,15 +117,49 @@ if [ -n "$PUBLIC_URL" ]; then
 
     # Watchdog in background
     (
+        RESTART_COUNT=0
         while true; do
             if ! kill -0 $TUNNEL_PID 2>/dev/null; then
-                echo "⚠️  Tunnel died, restarting in 10s..."
-                sleep 10
-                ./cloudflared tunnel --url "http://localhost:${PORT}" --grace-period 300s > /tmp/cloudflared.log 2>&1 &
-                TUNNEL_PID=$!
+                RESTART_COUNT=$((RESTART_COUNT + 1))
+                echo "⚠️  Tunnel died (restart #${RESTART_COUNT}), checking backend..."
+
+                # Check if backend is still alive
+                BACKEND_UP=0
+                for _b in $(seq 1 5); do
+                    if curl -s -o /dev/null -w "%{http_code}" "http://localhost:${PORT}/v1/models" 2>/dev/null | grep -q "200"; then
+                        BACKEND_UP=1
+                        break
+                    fi
+                    sleep 1
+                done
+
+                if [ "$BACKEND_UP" -eq 0 ]; then
+                    echo "  ❌ Backend on port ${PORT} is DOWN. Not restarting tunnel."
+                    echo "  Check: curl http://localhost:${PORT}/health"
+                    cat /tmp/cloudflared.log 2>/dev/null | tail -10
+                    exit 1
+                fi
+
+                echo "  └─ Backend OK, dumping tunnel logs..."
+                cat /tmp/cloudflared.log 2>/dev/null | tail -5
+
                 sleep 5
+                pkill -f cloudflared 2>/dev/null || true
+                sleep 2
+
+                ./cloudflared tunnel --url "http://localhost:${PORT}" --metrics 0.0.0.0:8282 > /tmp/cloudflared.log 2>&1 &
+                TUNNEL_PID=$!
+                sleep 3
+
+                if kill -0 $TUNNEL_PID 2>/dev/null; then
+                    echo "  ✅ Tunnel restarted"
+                else
+                    echo "  ❌ Tunnel restart failed"
+                    cat /tmp/cloudflared.log | tail -10
+                    exit 1
+                fi
             fi
-            sleep 10
+            sleep 15
         done
     ) &
 
