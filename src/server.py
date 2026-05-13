@@ -456,8 +456,10 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     try:
                         line = pending_task.result()
                     except StopAsyncIteration:
+                        logger.warning(f"[{request_id}] Stream ended unexpectedly")
                         break
-                    except Exception:
+                    except Exception as e:
+                        logger.error(f"[{request_id}] Stream error: {e}")
                         break
                     finally:
                         pending_task = None
@@ -472,6 +474,8 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     except Exception:
                         continue
                     if data.get("error"):
+                        logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
+                        yield b"data: " + orjson.dumps({"error": {"message": data["error"]}}) + b"\n\n"
                         break
 
                     message = data.get("message", {})
