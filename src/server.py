@@ -426,7 +426,7 @@ def _suppress_task_exception(task):
 
 
 def _handle_stream(state, request_id, ollama_payload, start_time):
-    request_id_bytes = f"chatcmpl-{request_id}".encode()
+    request_id_str = f"chatcmpl-{request_id}"
 
     async def stream_generator():
         first_chunk = True
@@ -489,7 +489,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         continue
 
                     yield b"data: " + orjson.dumps({
-                        "id": request_id_bytes,
+                        "id": request_id_str,
                         "object": "chat.completion.chunk",
                         "created": created,
                         "model": _MODEL_NAME_BYTES,
@@ -506,7 +506,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         completion_tokens = data.get("eval_count", 0)
 
                         yield b"data: " + orjson.dumps({
-                            "id": request_id_bytes,
+                            "id": request_id_str,
                             "object": "chat.completion.chunk",
                             "created": created,
                             "model": _MODEL_NAME_BYTES,
@@ -525,7 +525,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
 
         except Exception as e:
             import traceback
-            print(f"[DBG {request_id}] STREAM CRASH: {e}", flush=True)
+            logger.error(f"[{request_id}] STREAM CRASH: {e}")
             traceback.print_exc()
             pass
         finally:
