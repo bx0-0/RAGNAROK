@@ -82,16 +82,35 @@ fi
 # ---- Start tunnel and capture URL ----
 echo -ne "  ├─ Starting Cloudflare tunnel"
 
-./cloudflared tunnel --url "http://localhost:${PORT}" --metrics 0.0.0.0:8282 > /tmp/cloudflared.log 2>&1 &
-TUNNEL_PID=$!
+# Kill ALL cloudflared instances to avoid rate-limit conflicts
+pkill -9 -f cloudflared 2>/dev/null || true
 sleep 3
 
-if ! kill -0 $TUNNEL_PID 2>/dev/null; then
-    echo ""
-    echo "  ❌ cloudflared failed to start"
-    cat /tmp/cloudflared.log
-    exit 1
-fi
+# Start with backoff retry for 429 rate limits
+start_tunnel() {
+    ./cloudflared tunnel --url "http://localhost:${PORT}" --metrics 0.0.0.0:8282 > /tmp/cloudflared.log 2>&1 &
+    local pid=$!
+    sleep 4
+
+    if ! kill -0 $pid 2>/dev/null; then
+        local log_content=$(cat /tmp/cloudflared.log 2>/dev/null)
+        if echo "$log_content" | grep -q "429"; then
+            echo ""
+            echo "  ⚠️  Cloudflare rate limited (429). Waiting 30s before retry..."
+            pkill -9 -f cloudflared 2>/dev/null || true
+            sleep 30
+            start_tunnel
+        else
+            echo ""
+            echo "  ❌ cloudflared failed to start"
+            echo "$log_content"
+            exit 1
+        fi
+    fi
+    echo $pid
+}
+
+TUNNEL_PID=$(start_tunnel)
 
 # Wait for URL in logs
 TIMEOUT=60
@@ -144,12 +163,18 @@ if [ -n "$PUBLIC_URL" ]; then
                 cat /tmp/cloudflared.log 2>/dev/null | tail -5
 
                 sleep 5
-                pkill -f cloudflared 2>/dev/null || true
+                pkill -9 -f cloudflared 2>/dev/null || true
                 sleep 2
+
+                # Check if last failure was a 429 rate limit
+                if grep -q "429" /tmp/cloudflared.log 2>/dev/null; then
+                    echo "  ⚠️  Cloudflare rate limited, waiting 30s..."
+                    sleep 30
+                fi
 
                 ./cloudflared tunnel --url "http://localhost:${PORT}" --metrics 0.0.0.0:8282 > /tmp/cloudflared.log 2>&1 &
                 TUNNEL_PID=$!
-                sleep 3
+                sleep 4
 
                 if kill -0 $TUNNEL_PID 2>/dev/null; then
                     echo "  ✅ Tunnel restarted"
