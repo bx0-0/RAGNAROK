@@ -314,13 +314,11 @@ async def openai_completions(request: Request):
     is_streaming = body.get("stream", False)
     ollama_messages = convert_messages_to_ollama(body.get("messages", []))
 
-    print(f"[DBG {request_id}] body keys={list(body.keys())} stream={is_streaming} msgs={len(ollama_messages)}", flush=True)
-    print(f"[DBG {request_id}] ollama_messages={ollama_messages}", flush=True)
-    print(f"[DBG {request_id}] payload model={MODEL_NAME}", flush=True)
 
     msg_count = len(ollama_messages)
     total_chars = sum(len(m.get("content", "")) if isinstance(m.get("content"), str) else 0 for m in ollama_messages)
-    logger.info(f"[{request_id}] {msg_count} msgs, ~{total_chars} chars, stream={is_streaming}")
+    logger.debug(f"[{request_id}] {msg_count} msgs, ~{total_chars} chars, stream={is_streaming}")
+    logger.debug(f"[{request_id}] ollama_messages={ollama_messages}")
 
     # Build ollama payload with orjson
     ollama_payload_dict = {
@@ -438,25 +436,33 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                 "POST", OLLAMA_CHAT_URL,
                 json=ollama_payload,
             ) as response:
-                print(f"[DBG {request_id}] Ollama status={response.status_code}", flush=True)
+                logger.debug(f"[{request_id}] Ollama status={response.status_code}")
                 if response.status_code != 200:
                     elapsed = round(time.monotonic() - start_time, 2)
                     await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
                     yield _SSE_UPSTREAM_ERR
                     return
 
-                async for line in response.aiter_lines():
+                aiter = response.aiter_lines()
+                while True:
+                    try:
+                        line = await asyncio.wait_for(aiter.__anext__(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        yield _SSE_KEEPALIVE
+                        continue
+                    except StopAsyncIteration:
+                        break
                     if not line.strip():
                         continue
-                    print(f"[DBG {request_id}] RAW Ollama line: {line[:300]}", flush=True)
+                    logger.debug(f"[{request_id}] RAW Ollama: {line[:300]}")
                     try:
                         data = orjson.loads(line)
                     except Exception as e:
-                        print(f"[DBG {request_id}] Parse fail: {e} | line={line[:100]}", flush=True)
+                        logger.error(f"[{request_id}] Parse fail: {e} | line={line[:100]}")
                         continue
 
                     if data.get("error"):
-                        print(f"[DBG {request_id}] Ollama error: {data.get('error')}", flush=True)
+                        logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
                         yield b"data: " + orjson.dumps({"error": {"message": data["error"]}}) + b"\n\n"
                         break
 
@@ -484,7 +490,6 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                             del delta["content"]
 
                     if not delta and not data.get("done"):
-                        print(f"[DBG {request_id}] Skipping empty chunk, data keys={list(data.keys())}", flush=True)
                         continue
 
                     yield b"data: " + orjson.dumps({
@@ -498,7 +503,6 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                             "finish_reason": None,
                         }],
                     }) + b"\n\n"
-                    print(f"[DBG {request_id}] Yielded chunk: delta={delta}", flush=True)
 
                     if data.get("done"):
                         prompt_tokens = data.get("prompt_eval_count", 0)
