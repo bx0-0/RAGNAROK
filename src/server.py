@@ -61,7 +61,7 @@ _OLLAMA_OPTS_WARMUP = orjson.dumps({
 # Precompute static SSE frame bytes
 _MODEL_NAME_BYTES = MODEL_NAME.encode()
 _SSE_DONE = b"data: [DONE]\n\n"
-_SSE_KEEPALIVE = b'data: {"id":"keep-alive","choices":[{"delta":{},"finish_reason":null}]}\n\n'
+_SSE_KEEPALIVE = b': ping\n\n'
 _SSE_UPSTREAM_ERR = b'data: {"error":{"message":"Upstream error"}}\n\ndata: [DONE]\n\n'
 _RATE_LIMIT_RESPONSE = JSONResponse(status_code=429, content={
     "error": {
@@ -449,7 +449,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                 pending_task.add_done_callback(_suppress_task_exception)
 
                 while True:
-                    done, _ = await asyncio.wait({pending_task}, timeout=5)
+                    done, _ = await asyncio.wait({pending_task}, timeout=2)
 
                     if not done:
                         yield _SSE_KEEPALIVE
