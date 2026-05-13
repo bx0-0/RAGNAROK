@@ -444,9 +444,11 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                 async for line in response.aiter_lines():
                     if not line.strip():
                         continue
+                    logger.debug(f"[{request_id}] RAW: {line[:200]}")
                     try:
                         data = orjson.loads(line)
-                    except Exception:
+                    except Exception as e:
+                        logger.error(f"[{request_id}] Parse fail: {e} | line={line[:100]}")
                         continue
 
                     if data.get("error"):
