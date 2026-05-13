@@ -134,6 +134,72 @@ done
 if [ -n "$PUBLIC_URL" ]; then
     echo " ✅"
 
+    # ── Verify tunnel actually works before showing banner ──
+    echo -ne "  ├─ Testing tunnel endpoint"
+    TUNNEL_OK=0
+    for _t in $(seq 1 30); do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "${PUBLIC_URL}/v1/models" 2>/dev/null || true)
+        if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "429" ]; then
+            TUNNEL_OK=1
+            break
+        fi
+        sleep 2
+        printf "\033[0;36m.\033[0m"
+    done
+
+    if [ "$TUNNEL_OK" -ne 1 ]; then
+        echo ""
+        echo "  ❌ Tunnel URL not reachable after 60s. Killing and retrying..."
+        kill $TUNNEL_PID 2>/dev/null || true
+        pkill -9 -f cloudflared 2>/dev/null || true
+        sleep 3
+
+        # One retry attempt
+        ./cloudflared tunnel --url "http://localhost:${PORT}" --metrics 0.0.0.0:8282 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
+        TUNNEL_PID=$!
+        sleep 5
+
+        RETRY_URL=""
+        for _r in $(seq 1 15); do
+            RETRY_URL=$(grep -oP 'https://[a-zA-Z0-9_\-]+\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null | tail -1 || true)
+            if [ -n "$RETRY_URL" ]; then break; fi
+            sleep 2
+        done
+
+        if [ -n "$RETRY_URL" ]; then
+            PUBLIC_URL="$RETRY_URL"
+            echo "$RETRY_URL" > "$URL_FILE"
+
+            echo -ne "  ├─ Testing retry tunnel"
+            RETRY_OK=0
+            for _t in $(seq 1 30); do
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "${PUBLIC_URL}/v1/models" 2>/dev/null || true)
+                if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "429" ]; then
+                    RETRY_OK=1
+                    break
+                fi
+                sleep 2
+                printf "\033[0;36m.\033[0m"
+            done
+
+            if [ "$RETRY_OK" -ne 1 ]; then
+                echo ""
+                echo "  ❌ Retry also failed. Tunnel may be blocked."
+                cat /tmp/cloudflared.log 2>/dev/null | tail -10
+                kill $TUNNEL_PID 2>/dev/null || true
+                exit 1
+            fi
+            echo " ✅"
+        else
+            echo ""
+            echo "  ❌ Could not get new URL on retry"
+            cat /tmp/cloudflared.log 2>/dev/null | tail -10
+            exit 1
+        fi
+    else
+        echo " ✅"
+    fi
+
     # Watchdog in background
     (
         RESTART_COUNT=0
