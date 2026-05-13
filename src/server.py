@@ -35,28 +35,28 @@ VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "ye
 REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")
 
 # Precompute ollama options (never changes at runtime)
-_OLLAMA_OPTS_BASE = orjson.dumps({
+_OLLAMA_OPTS_BASE = {
     "num_ctx": NUM_CTX,
     "num_batch": NUM_BATCH,
     "flash_attn": FLASH_ATTN,
     "num_gpu": NUM_GPU,
-}).decode()
+}
 
-_OLLAMA_OPTS = orjson.dumps({
+_OLLAMA_OPTS = {
     "num_ctx": NUM_CTX,
     "num_batch": NUM_BATCH,
     "flash_attn": FLASH_ATTN,
     "num_gpu": NUM_GPU,
     "num_predict": NUM_PREDICT,
-}).decode()
+}
 
-_OLLAMA_OPTS_WARMUP = orjson.dumps({
+_OLLAMA_OPTS_WARMUP = {
     "num_ctx": NUM_CTX,
     "num_batch": NUM_BATCH,
     "flash_attn": FLASH_ATTN,
     "num_gpu": NUM_GPU,
     "num_predict": 1,
-}).decode()
+}
 
 # Precompute static SSE frame bytes
 _MODEL_NAME_BYTES = MODEL_NAME.encode()
