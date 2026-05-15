@@ -491,8 +491,11 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
 
                     thinking = message.get("thinking", "")
 
+                    # Extract tool_calls BEFORE the condition check
+                    tool_calls = message.get("tool_calls")
+
                     # Only allocate delta when there's actual data to send
-                    if first_chunk or thinking or content:
+                    if first_chunk or thinking or content or tool_calls:
                         delta = {}
                         if first_chunk:
                             delta["role"] = "assistant"
@@ -502,7 +505,6 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         if content:
                             delta["content"] = content
 
-                        tool_calls = message.get("tool_calls")
                         if tool_calls:
                             try:
                                 has_tool_calls = True
