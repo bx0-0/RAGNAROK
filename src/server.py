@@ -449,7 +449,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                 graceful = False
                 while True:
                     try:
-                        raw = await asyncio.wait_for(line_iter.__anext__(), timeout=10.0)
+                        raw = await asyncio.wait_for(line_iter.__anext__(), timeout=30.0)
                     except asyncio.TimeoutError:
                         keepalive_count += 1
                         if keepalive_count > 50:
