@@ -445,14 +445,22 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
 
                 # Read lines directly — no queue relay — but with keepalive pings
                 line_iter = response.aiter_lines()
+                keepalive_count = 0
+                graceful = False
                 while True:
                     try:
                         raw = await asyncio.wait_for(line_iter.__anext__(), timeout=5.0)
                     except asyncio.StopAsyncIteration:
                         break
                     except asyncio.TimeoutError:
+                        keepalive_count += 1
+                        if keepalive_count > 60:
+                            yield b"data: " + orjson.dumps({"error": {"message": "Upstream timeout", "type": "timeout"}}) + b"\n\n"
+                            break
                         yield _SSE_KEEPALIVE
                         continue
+                    # Reset counter on successful read
+                    keepalive_count = 0
 
                     if not raw.strip():
                         continue
@@ -508,6 +516,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     if data.get("done"):
                         prompt_tokens = data.get("prompt_eval_count", 0)
                         completion_tokens = data.get("eval_count", 0)
+                        graceful = True
 
                         yield b"data: " + orjson.dumps({
                             "id": request_id_str,
@@ -527,9 +536,37 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         }) + b"\n\n"
                         break
 
+                # Fallback: Ollama closed without done:true — send truncated finish
+                if not graceful and not keepalive_count > 60:
+                    yield b"data: " + orjson.dumps({
+                        "id": request_id_str,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": MODEL_NAME,
+                        "choices": [{
+                            "delta": {},
+                            "index": 0,
+                            "finish_reason": "tool_calls" if has_tool_calls else "stop",
+                        }],
+                        "usage": {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": prompt_tokens + completion_tokens,
+                        },
+                    }) + b"\n\n"
+
+        except httpx.RemoteProtocolError:
+            logger.error(f"[{request_id}] Ollama connection reset")
+            yield b"data: " + orjson.dumps({"error": {"message": "Upstream connection reset", "type": "upstream_error"}}) + b"\n\n"
+        except httpx.ConnectError:
+            logger.error(f"[{request_id}] Cannot connect to Ollama")
+            yield b"data: " + orjson.dumps({"error": {"message": "Cannot connect to upstream", "type": "upstream_error"}}) + b"\n\n"
+        except httpx.ReadTimeout:
+            logger.error(f"[{request_id}] Ollama read timeout")
+            yield b"data: " + orjson.dumps({"error": {"message": "Upstream read timeout", "type": "upstream_error"}}) + b"\n\n"
         except Exception as e:
             logger.error(f"[{request_id}] STREAM CRASH: {e}")
-            pass
+            yield b"data: " + orjson.dumps({"error": {"message": "Internal server error", "type": "server_error"}}) + b"\n\n"
         finally:
             elapsed = round(time.monotonic() - start_time, 2)
             await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
