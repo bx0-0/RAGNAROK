@@ -449,16 +449,16 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                 graceful = False
                 while True:
                     try:
-                        raw = await asyncio.wait_for(line_iter.__anext__(), timeout=5.0)
-                    except asyncio.StopAsyncIteration:
-                        break
+                        raw = await asyncio.wait_for(line_iter.__anext__(), timeout=10.0)
                     except asyncio.TimeoutError:
                         keepalive_count += 1
-                        if keepalive_count > 60:
+                        if keepalive_count > 50:
                             yield b"data: " + orjson.dumps({"error": {"message": "Upstream timeout", "type": "timeout"}}) + b"\n\n"
                             break
                         yield _SSE_KEEPALIVE
                         continue
+                    except (asyncio.StopAsyncIteration, asyncio.CancelledError):
+                        break
                     # Reset counter on successful read
                     keepalive_count = 0
 
@@ -506,9 +506,10 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         if tool_calls:
                             try:
                                 has_tool_calls = True
-                                delta["tool_calls"] = format_tool_calls_openai(tool_calls)
+                                delta["tool_calls"] = format_tool_calls_openai(list(tool_calls))
                                 for tc in tool_calls:
-                                    logger.info(f"[{request_id}] Tool: {tc.get('function', {}).get('name', '?')}")
+                                    tc_name = tc.get("function", {}).get("name") or "?"
+                                    logger.info(f"[{request_id}] Tool: {tc_name}")
                             except Exception as e:
                                 logger.error(f"[{request_id}] Tool format error: {e}")
                                 delta["tool_calls"] = []
