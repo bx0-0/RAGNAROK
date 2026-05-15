@@ -61,12 +61,12 @@ _OLLAMA_OPTS_WARMUP = {
 _SSE_DONE = b"data: [DONE]\n\n"
 _SSE_KEEPALIVE = b': ping\n\n'
 _SSE_UPSTREAM_ERR = b'data: {"error":{"message":"Upstream error"}}\n\ndata: [DONE]\n\n'
-_RATE_LIMIT_RESPONSE = JSONResponse(status_code=429, content={
+_RATE_LIMIT_RESPONSE = Response(status_code=429, content=orjson.dumps({
     "error": {
         "message": "Server is busy. Try again shortly.",
         "type": "rate_limit_error",
     },
-})
+}), media_type="application/json")
 _BAD_JSON_RESPONSE = Response(status_code=400, content=b'{"error":"Invalid JSON"}', media_type="application/json")
 
 
@@ -352,7 +352,7 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
                 err = await response.aread()
                 elapsed = round(time.monotonic() - start_time, 2)
                 await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
-                return JSONResponse(status_code=response.status_code, content=orjson.loads(err))
+                return Response(status_code=response.status_code, content=err, media_type="application/json")
 
             async for line in response.aiter_lines():
                 if not line.strip():
