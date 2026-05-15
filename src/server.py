@@ -444,10 +444,12 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     return
 
                 # Read lines directly — no queue relay — but with keepalive pings
-                async_line = response.aiter_lines().__anext__()
+                line_iter = response.aiter_lines()
                 while True:
                     try:
-                        raw = await asyncio.wait_for(async_line, timeout=5.0)
+                        raw = await asyncio.wait_for(line_iter.__anext__(), timeout=5.0)
+                    except asyncio.StopAsyncIteration:
+                        break
                     except asyncio.TimeoutError:
                         yield _SSE_KEEPALIVE
                         continue
