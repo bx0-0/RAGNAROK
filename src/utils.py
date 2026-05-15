@@ -21,19 +21,31 @@ def extract_text_content(content):
 
 
 def convert_messages_to_ollama(messages):
-    ollama_messages = []
+    result = []
+    append = result.append
     for m in messages:
-        role = m.get("role")
-        content = extract_text_content(m.get("content"))
+        role = m["role"]
+        content = m.get("content")
 
         if role == "tool":
-            tool_msg = {"role": "tool", "content": content or ""}
-            tool_call_id = m.get("tool_call_id")
-            if tool_call_id:
-                tool_msg["tool_call_id"] = tool_call_id
-            ollama_messages.append(tool_msg)
+            tool_msg = {"role": "tool", "content": content if isinstance(content, str) else ""}
+            tc_id = m.get("tool_call_id")
+            if tc_id:
+                tool_msg["tool_call_id"] = tc_id
+            append(tool_msg)
         elif role == "assistant":
-            asst_msg = {"role": "assistant", "content": content or ""}
+            # Extract text from content
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                text = " ".join(
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                )
+            else:
+                text = ""
+            asst_msg = {"role": "assistant", "content": text}
             tool_calls = m.get("tool_calls")
             if tool_calls:
                 ollama_tc = []
@@ -52,13 +64,27 @@ def convert_messages_to_ollama(messages):
                         }
                     })
                 asst_msg["tool_calls"] = ollama_tc
-            ollama_messages.append(asst_msg)
+            append(asst_msg)
         elif role == "system":
-            ollama_messages.append({"role": "system", "content": content})
+            if isinstance(content, list):
+                content = " ".join(
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                )
+            append({"role": "system", "content": content})
         elif role == "user":
-            if content and content.strip():
-                ollama_messages.append({"role": "user", "content": content})
-    return ollama_messages
+            if isinstance(content, str) and content.strip():
+                append({"role": "user", "content": content})
+            elif isinstance(content, list):
+                text = " ".join(
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                )
+                if text.strip():
+                    append({"role": "user", "content": text})
+    return result
 
 
 def format_tool_calls_openai(ollama_tcs):

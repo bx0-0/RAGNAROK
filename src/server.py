@@ -7,9 +7,8 @@ import orjson
 import httpx
 import uvloop
 import uvicorn
-from collections import deque
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.logging import setup_logging, logger
@@ -68,7 +67,7 @@ _RATE_LIMIT_RESPONSE = JSONResponse(status_code=429, content={
         "type": "rate_limit_error",
     },
 })
-_BAD_JSON_RESPONSE = JSONResponse(status_code=400, content={"error": "Invalid JSON"})
+_BAD_JSON_RESPONSE = Response(status_code=400, content=b'{"error":"Invalid JSON"}', media_type="application/json")
 
 
 # ─── Async-safe log queue (non-blocking) ───
@@ -314,12 +313,6 @@ async def openai_completions(request: Request):
     is_streaming = body.get("stream", False)
     ollama_messages = convert_messages_to_ollama(body.get("messages", []))
 
-
-    msg_count = len(ollama_messages)
-    total_chars = sum(len(m.get("content", "")) if isinstance(m.get("content"), str) else 0 for m in ollama_messages)
-    logger.debug(f"[{request_id}] {msg_count} msgs, ~{total_chars} chars, stream={is_streaming}")
-    logger.debug(f"[{request_id}] ollama_messages={ollama_messages}")
-
     # Build ollama payload with orjson
     ollama_payload_dict = {
         "model": MODEL_NAME,
@@ -336,14 +329,15 @@ async def openai_completions(request: Request):
         ollama_payload_dict["tool_choice"] = tool_choice
 
     try:
+        created = int(time.time())
         if not is_streaming:
-            return await _handle_non_stream(state, request_id, ollama_payload_dict, start_time)
+            return await _handle_non_stream(state, request_id, ollama_payload_dict, start_time, created)
         return _handle_stream(state, request_id, ollama_payload_dict, start_time)
     finally:
         state.semaphore.release()
 
 
-async def _handle_non_stream(state, request_id, ollama_payload, start_time):
+async def _handle_non_stream(state, request_id, ollama_payload, start_time, created):
     content_parts = []
     thinking_parts = []
     all_tool_calls = []
@@ -383,7 +377,7 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time):
     except Exception as e:
         elapsed = round(time.monotonic() - start_time, 2)
         await log_request(request_id, "POST", "/v1/chat/completions", 500, elapsed, 0, 0, f"ERR:{str(e)[:40]}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return Response(status_code=500, content=orjson.dumps({"error": str(e)}), media_type="application/json")
 
     elapsed = round(time.monotonic() - start_time, 2)
     await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "NON-STREAM")
@@ -397,10 +391,10 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time):
     if all_tool_calls:
         resp_message["tool_calls"] = all_tool_calls
 
-    return JSONResponse(content={
+    return Response(content=orjson.dumps({
         "id": f"chatcmpl-{request_id}",
         "object": "chat.completion",
-        "created": int(time.time()),
+        "created": created,
         "model": MODEL_NAME,
         "choices": [{
             "index": 0,
@@ -412,66 +406,59 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time):
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
         },
-    })
+    }), media_type="application/json")
 
-
-def _suppress_task_exception(task):
-    try:
-        task.result()
-    except (asyncio.CancelledError, Exception):
-        pass
 
 
 def _handle_stream(state, request_id, ollama_payload, start_time):
     request_id_str = f"chatcmpl-{request_id}"
+    created = int(time.time())
+
+    # Pre-compute static SSE envelope (prefix/suffix around delta — skips re-serializing id/object/created/model/index/finish_reason every chunk)
+    _tpl = orjson.dumps({
+        "id": request_id_str,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": MODEL_NAME,
+        "choices": [{"delta": "__DELTA__", "index": 0, "finish_reason": None}],
+    })
+    _marker = b'"__DELTA__"'
+    _dpos = _tpl.index(_marker)
+    _sfx = b"data: " + _tpl[:_dpos]
+    _efx = _tpl[_dpos + len(_marker):] + b"\n\n"
 
     async def stream_generator():
         first_chunk = True
         has_tool_calls = False
         prompt_tokens = completion_tokens = 0
-        created = int(time.time())
 
         try:
             async with state.http_client.stream(
                 "POST", OLLAMA_CHAT_URL,
                 json=ollama_payload,
             ) as response:
-                logger.debug(f"[{request_id}] Ollama status={response.status_code}")
                 if response.status_code != 200:
                     elapsed = round(time.monotonic() - start_time, 2)
                     await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
                     yield _SSE_UPSTREAM_ERR
                     return
 
-                line_queue = asyncio.Queue()
-
-                async def _reader():
-                    try:
-                        async for raw in response.aiter_lines():
-                            if raw.strip():
-                                await line_queue.put(raw)
-                    except Exception as exc:
-                        logger.error(f"[{request_id}] Reader died: {exc}")
-                    finally:
-                        await line_queue.put(None)
-
-                task = asyncio.create_task(_reader())
-
+                # Read lines directly — no queue relay — but with keepalive pings
+                async_line = response.aiter_lines().__anext__()
                 while True:
                     try:
-                        line = await asyncio.wait_for(line_queue.get(), timeout=5.0)
+                        raw = await asyncio.wait_for(async_line, timeout=5.0)
                     except asyncio.TimeoutError:
                         yield _SSE_KEEPALIVE
                         continue
 
-                    if line is None:
-                        break
+                    if not raw.strip():
+                        continue
 
-                    logger.debug(f"[{request_id}] RAW Ollama: {line[:300]}")
                     try:
-                        data = orjson.loads(line)
+                        data = orjson.loads(raw)
                     except Exception as e:
-                        logger.error(f"[{request_id}] Parse fail: {e} | line={line[:100]}")
+                        logger.error(f"[{request_id}] Parse fail: {e} | line={raw[:100]}")
                         continue
 
                     if data.get("error"):
@@ -480,42 +467,41 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         break
 
                     message = data.get("message", {})
-                    content = extract_text_content(message.get("content"))
+
+                    # Inline extract_text_content
+                    content = message.get("content")
+                    if isinstance(content, list):
+                        content = " ".join(
+                            item.get("text", "")
+                            for item in content
+                            if isinstance(item, dict) and item.get("type") == "text"
+                        )
+                    elif not isinstance(content, str):
+                        content = content if content is not None else ""
+
                     thinking = message.get("thinking", "")
 
-                    delta = {}
-                    if first_chunk:
-                        delta["role"] = "assistant"
-                        first_chunk = False
+                    # Only allocate delta when there's actual data to send
+                    if first_chunk or thinking or content:
+                        delta = {}
+                        if first_chunk:
+                            delta["role"] = "assistant"
+                            first_chunk = False
+                        if thinking:
+                            delta["reasoning_content"] = thinking
+                        if content:
+                            delta["content"] = content
 
-                    if thinking:
-                        delta["reasoning_content"] = thinking
-                    if content:
-                        delta["content"] = content
+                        tool_calls = message.get("tool_calls")
+                        if tool_calls:
+                            has_tool_calls = True
+                            delta["tool_calls"] = format_tool_calls_openai(tool_calls)
+                            for tc in tool_calls:
+                                logger.info(f"[{request_id}] Tool: {tc.get('function', {}).get('name', '?')}")
+                            if "content" in delta and not delta["content"]:
+                                del delta["content"]
 
-                    tool_calls = message.get("tool_calls")
-                    if tool_calls:
-                        has_tool_calls = True
-                        delta["tool_calls"] = format_tool_calls_openai(tool_calls)
-                        for tc in tool_calls:
-                            logger.info(f"[{request_id}] Tool: {tc.get('function', {}).get('name', '?')}")
-                        if "content" in delta and not delta["content"]:
-                            del delta["content"]
-
-                    if not delta and not data.get("done"):
-                        continue
-
-                    yield b"data: " + orjson.dumps({
-                        "id": request_id_str,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": MODEL_NAME,
-                        "choices": [{
-                            "delta": delta,
-                            "index": 0,
-                            "finish_reason": None,
-                        }],
-                    }) + b"\n\n"
+                        yield _sfx + orjson.dumps(delta) + _efx
 
                     if data.get("done"):
                         prompt_tokens = data.get("prompt_eval_count", 0)
@@ -539,16 +525,8 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         }) + b"\n\n"
                         break
 
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-
         except Exception as e:
-            import traceback
             logger.error(f"[{request_id}] STREAM CRASH: {e}")
-            traceback.print_exc()
             pass
         finally:
             elapsed = round(time.monotonic() - start_time, 2)
