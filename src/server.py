@@ -504,14 +504,22 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
 
                         tool_calls = message.get("tool_calls")
                         if tool_calls:
-                            has_tool_calls = True
-                            delta["tool_calls"] = format_tool_calls_openai(tool_calls)
-                            for tc in tool_calls:
-                                logger.info(f"[{request_id}] Tool: {tc.get('function', {}).get('name', '?')}")
+                            try:
+                                has_tool_calls = True
+                                delta["tool_calls"] = format_tool_calls_openai(tool_calls)
+                                for tc in tool_calls:
+                                    logger.info(f"[{request_id}] Tool: {tc.get('function', {}).get('name', '?')}")
+                            except Exception as e:
+                                logger.error(f"[{request_id}] Tool format error: {e}")
+                                delta["tool_calls"] = []
                             if "content" in delta and not delta["content"]:
                                 del delta["content"]
 
-                        yield _sfx + orjson.dumps(delta) + _efx
+                        try:
+                            yield _sfx + orjson.dumps(delta) + _efx
+                        except Exception as e:
+                            logger.error(f"[{request_id}] Serialize delta failed: {e}")
+                            continue
 
                     if data.get("done"):
                         prompt_tokens = data.get("prompt_eval_count", 0)

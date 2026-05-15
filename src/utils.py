@@ -1,6 +1,8 @@
 import os
 import orjson
 
+from src.logging import logger
+
 
 def _fast_id():
     return os.urandom(4).hex()
@@ -90,17 +92,25 @@ def convert_messages_to_ollama(messages):
 def format_tool_calls_openai(ollama_tcs):
     openai_tcs = []
     for idx, tc in enumerate(ollama_tcs):
-        func = tc.get("function", {})
-        args = func.get("arguments", {})
-        if isinstance(args, dict):
-            args = orjson.dumps(args).decode("utf-8")
-        openai_tcs.append({
-            "index": idx,
-            "id": tc.get("id") or f"call_{_fast_id()}",
-            "type": "function",
-            "function": {
-                "name": func.get("name", ""),
-                "arguments": args,
-            },
-        })
+        try:
+            func = tc.get("function", {})
+            args = func.get("arguments", {})
+            if isinstance(args, dict):
+                try:
+                    args = orjson.dumps(args).decode("utf-8")
+                except Exception:
+                    args = "{}"
+            openai_tcs.append({
+                "index": idx,
+                "id": tc.get("id") or f"call_{_fast_id()}",
+                "type": "function",
+                "function": {
+                    "name": func.get("name", ""),
+                    "arguments": args,
+                },
+            })
+        except Exception as e:
+            logger.error(f"Tool format error: {e}")
     return openai_tcs
+
+
