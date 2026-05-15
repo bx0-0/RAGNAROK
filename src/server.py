@@ -457,7 +457,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                             break
                         yield _SSE_KEEPALIVE
                         continue
-                    except (asyncio.StopAsyncIteration, asyncio.CancelledError):
+                    except (StopAsyncIteration, asyncio.CancelledError):
                         break
                     # Reset counter on successful read
                     keepalive_count = 0
