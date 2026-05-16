@@ -443,31 +443,37 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     yield _SSE_UPSTREAM_ERR
                     return
 
-                # Read lines with non-cancelling timeout — asyncio.wait_for cancels the
-                # underlying httpx read on timeout, corrupting the stream forever.
-                # Using asyncio.wait with RETURN_FIRST avoids cancelling the read task.
+                # Background reader feeds lines into a queue so we can wait_with_timeout
+                # without ever cancelling the httpx socket read.
+                line_q = asyncio.Queue(maxsize=256)
+                stop_evt = asyncio.Event()
+
+                async def _reader():
+                    try:
+                        async for raw in response.aiter_lines():
+                            await line_q.put(raw)
+                    except Exception:
+                        pass
+                    finally:
+                        await line_q.put(None)  # sentinel
+
+                reader = asyncio.create_task(_reader())
                 keepalive_count = 0
                 graceful = False
-                read_task = None
                 try:
-                    line_iter = response.aiter_lines()
                     while True:
-                        read_task = asyncio.create_task(line_iter.__anext__())
-                        done, pending = await asyncio.wait(
-                            [read_task],
-                            timeout=10.0,
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                        if not done:
-                            # Timeout — fire keepalive but don't cancel read_task
+                        try:
+                            raw = await asyncio.wait_for(line_q.get(), timeout=10.0)
+                        except asyncio.TimeoutError:
                             keepalive_count += 1
                             if keepalive_count > 120:
-                                read_task.cancel()
                                 yield b"data: " + orjson.dumps({"error": {"message": "Upstream timeout", "type": "timeout"}}) + b"\n\n"
                                 break
                             yield _SSE_KEEPALIVE
                             continue
-                        raw = read_task.result()
+
+                        if raw is None:
+                            break
                         keepalive_count = 0
 
                         if not raw.strip():
@@ -486,7 +492,6 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
 
                         message = data.get("message", {})
 
-                        # Inline extract_text_content
                         content = message.get("content")
                         if isinstance(content, list):
                             content = " ".join(
@@ -498,11 +503,8 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                             content = content if content is not None else ""
 
                         thinking = message.get("thinking", "")
-
-                        # Extract tool_calls BEFORE the condition check
                         tool_calls = message.get("tool_calls")
 
-                        # Only allocate delta when there's actual data to send
                         if first_chunk or thinking or content or tool_calls:
                             delta = {}
                             if first_chunk:
@@ -554,19 +556,13 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                                 },
                             }) + b"\n\n"
                             break
-
-                except StopAsyncIteration:
-                    pass
-                except Exception:
-                    raise
                 finally:
-                    if read_task and not read_task.done():
-                        read_task.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await read_task
+                    reader.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await reader
 
                 # Fallback: Ollama closed without done:true — send truncated finish
-                if not graceful and not keepalive_count > 120:
+                if not graceful and keepalive_count <= 120:
                     yield b"data: " + orjson.dumps({
                         "id": request_id_str,
                         "object": "chat.completion.chunk",
