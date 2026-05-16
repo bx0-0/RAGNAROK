@@ -443,112 +443,130 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     yield _SSE_UPSTREAM_ERR
                     return
 
-                # Read lines directly — no queue relay — but with keepalive pings
-                line_iter = response.aiter_lines()
+                # Read lines with non-cancelling timeout — asyncio.wait_for cancels the
+                # underlying httpx read on timeout, corrupting the stream forever.
+                # Using asyncio.wait with RETURN_FIRST avoids cancelling the read task.
                 keepalive_count = 0
                 graceful = False
-                while True:
-                    try:
-                        raw = await asyncio.wait_for(line_iter.__anext__(), timeout=30.0)
-                    except asyncio.TimeoutError:
-                        keepalive_count += 1
-                        if keepalive_count > 50:
-                            yield b"data: " + orjson.dumps({"error": {"message": "Upstream timeout", "type": "timeout"}}) + b"\n\n"
-                            break
-                        yield _SSE_KEEPALIVE
-                        continue
-                    except (StopAsyncIteration, asyncio.CancelledError):
-                        break
-                    # Reset counter on successful read
-                    keepalive_count = 0
-
-                    if not raw.strip():
-                        continue
-
-                    try:
-                        data = orjson.loads(raw)
-                    except Exception as e:
-                        logger.error(f"[{request_id}] Parse fail: {e} | line={raw[:100]}")
-                        continue
-
-                    if data.get("error"):
-                        logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
-                        yield b"data: " + orjson.dumps({"error": {"message": data["error"]}}) + b"\n\n"
-                        break
-
-                    message = data.get("message", {})
-
-                    # Inline extract_text_content
-                    content = message.get("content")
-                    if isinstance(content, list):
-                        content = " ".join(
-                            item.get("text", "")
-                            for item in content
-                            if isinstance(item, dict) and item.get("type") == "text"
+                read_task = None
+                try:
+                    line_iter = response.aiter_lines()
+                    while True:
+                        read_task = asyncio.create_task(line_iter.__anext__())
+                        done, pending = await asyncio.wait(
+                            [read_task],
+                            timeout=10.0,
+                            return_when=asyncio.FIRST_COMPLETED,
                         )
-                    elif not isinstance(content, str):
-                        content = content if content is not None else ""
+                        if not done:
+                            # Timeout — fire keepalive but don't cancel read_task
+                            keepalive_count += 1
+                            if keepalive_count > 120:
+                                read_task.cancel()
+                                yield b"data: " + orjson.dumps({"error": {"message": "Upstream timeout", "type": "timeout"}}) + b"\n\n"
+                                break
+                            yield _SSE_KEEPALIVE
+                            continue
+                        raw = read_task.result()
+                        keepalive_count = 0
 
-                    thinking = message.get("thinking", "")
-
-                    # Extract tool_calls BEFORE the condition check
-                    tool_calls = message.get("tool_calls")
-
-                    # Only allocate delta when there's actual data to send
-                    if first_chunk or thinking or content or tool_calls:
-                        delta = {}
-                        if first_chunk:
-                            delta["role"] = "assistant"
-                            first_chunk = False
-                        if thinking:
-                            delta["reasoning_content"] = thinking
-                        if content:
-                            delta["content"] = content
-
-                        if tool_calls:
-                            try:
-                                has_tool_calls = True
-                                delta["tool_calls"] = format_tool_calls_openai(list(tool_calls))
-                                for tc in tool_calls:
-                                    tc_name = tc.get("function", {}).get("name") or "?"
-                                    logger.info(f"[{request_id}] Tool: {tc_name}")
-                            except Exception as e:
-                                logger.error(f"[{request_id}] Tool format error: {e}")
-                                delta["tool_calls"] = []
-                            if "content" in delta and not delta["content"]:
-                                del delta["content"]
-
-                        try:
-                            yield _sfx + orjson.dumps(delta) + _efx
-                        except Exception as e:
-                            logger.error(f"[{request_id}] Serialize delta failed: {e}")
+                        if not raw.strip():
                             continue
 
-                    if data.get("done"):
-                        prompt_tokens = data.get("prompt_eval_count", 0)
-                        completion_tokens = data.get("eval_count", 0)
-                        graceful = True
+                        try:
+                            data = orjson.loads(raw)
+                        except Exception as e:
+                            logger.error(f"[{request_id}] Parse fail: {e} | line={raw[:100]}")
+                            continue
 
-                        yield b"data: " + orjson.dumps({
-                            "id": request_id_str,
-                            "object": "chat.completion.chunk",
-                            "created": created,
-                            "model": MODEL_NAME,
-                            "choices": [{
-                                "delta": {},
-                                "index": 0,
-                                "finish_reason": "tool_calls" if has_tool_calls else "stop",
-                            }],
-                            "usage": {
-                                "prompt_tokens": prompt_tokens,
-                                "completion_tokens": completion_tokens,
-                                "total_tokens": prompt_tokens + completion_tokens,
-                            },
-                        }) + b"\n\n"
-                        break
+                        if data.get("error"):
+                            logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
+                            yield b"data: " + orjson.dumps({"error": {"message": data["error"]}}) + b"\n\n"
+                            break
+
+                        message = data.get("message", {})
+
+                        # Inline extract_text_content
+                        content = message.get("content")
+                        if isinstance(content, list):
+                            content = " ".join(
+                                item.get("text", "")
+                                for item in content
+                                if isinstance(item, dict) and item.get("type") == "text"
+                            )
+                        elif not isinstance(content, str):
+                            content = content if content is not None else ""
+
+                        thinking = message.get("thinking", "")
+
+                        # Extract tool_calls BEFORE the condition check
+                        tool_calls = message.get("tool_calls")
+
+                        # Only allocate delta when there's actual data to send
+                        if first_chunk or thinking or content or tool_calls:
+                            delta = {}
+                            if first_chunk:
+                                delta["role"] = "assistant"
+                                first_chunk = False
+                            if thinking:
+                                delta["reasoning_content"] = thinking
+                            if content:
+                                delta["content"] = content
+
+                            if tool_calls:
+                                try:
+                                    has_tool_calls = True
+                                    delta["tool_calls"] = format_tool_calls_openai(list(tool_calls))
+                                    for tc in tool_calls:
+                                        tc_name = tc.get("function", {}).get("name") or "?"
+                                        logger.info(f"[{request_id}] Tool: {tc_name}")
+                                except Exception as e:
+                                    logger.error(f"[{request_id}] Tool format error: {e}")
+                                    delta["tool_calls"] = []
+                                if "content" in delta and not delta["content"]:
+                                    del delta["content"]
+
+                            try:
+                                yield _sfx + orjson.dumps(delta) + _efx
+                            except Exception as e:
+                                logger.error(f"[{request_id}] Serialize delta failed: {e}")
+                                continue
+
+                        if data.get("done"):
+                            prompt_tokens = data.get("prompt_eval_count", 0)
+                            completion_tokens = data.get("eval_count", 0)
+                            graceful = True
+
+                            yield b"data: " + orjson.dumps({
+                                "id": request_id_str,
+                                "object": "chat.completion.chunk",
+                                "created": created,
+                                "model": MODEL_NAME,
+                                "choices": [{
+                                    "delta": {},
+                                    "index": 0,
+                                    "finish_reason": "tool_calls" if has_tool_calls else "stop",
+                                }],
+                                "usage": {
+                                    "prompt_tokens": prompt_tokens,
+                                    "completion_tokens": completion_tokens,
+                                    "total_tokens": prompt_tokens + completion_tokens,
+                                },
+                            }) + b"\n\n"
+                            break
+
+                except StopAsyncIteration:
+                    pass
+                except Exception:
+                    raise
+                finally:
+                    if read_task and not read_task.done():
+                        read_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await read_task
 
                 # Fallback: Ollama closed without done:true — send truncated finish
-                if not graceful and not keepalive_count > 60:
+                if not graceful and not keepalive_count > 120:
                     yield b"data: " + orjson.dumps({
                         "id": request_id_str,
                         "object": "chat.completion.chunk",
