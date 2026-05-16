@@ -446,14 +446,14 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                 # Background reader feeds lines into a queue so we can wait_with_timeout
                 # without ever cancelling the httpx socket read.
                 line_q = asyncio.Queue(maxsize=256)
-                stop_evt = asyncio.Event()
+                reader_error = [None]
 
                 async def _reader():
                     try:
                         async for raw in response.aiter_lines():
                             await line_q.put(raw)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        reader_error[0] = e
                     finally:
                         await line_q.put(None)  # sentinel
 
@@ -561,8 +561,12 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     with contextlib.suppress(asyncio.CancelledError):
                         await reader
 
+                if reader_error[0]:
+                    logger.error(f"[{request_id}] Reader error: {reader_error[0]}")
+                    yield b"data: " + orjson.dumps({"error": {"message": str(reader_error[0]), "type": "upstream_error"}}) + b"\n\n"
+
                 # Fallback: Ollama closed without done:true — send truncated finish
-                if not graceful and keepalive_count <= 120:
+                if not graceful and not reader_error[0]:
                     yield b"data: " + orjson.dumps({
                         "id": request_id_str,
                         "object": "chat.completion.chunk",
