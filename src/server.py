@@ -323,6 +323,7 @@ async def openai_completions(request: Request):
     try:
         body = orjson.loads(await request.body())
     except Exception:
+        state.semaphore.release()
         await log_request(request_id, "POST", "/v1/chat/completions", 400, 0, 0, 0, "BAD_JSON")
         return _BAD_JSON_RESPONSE
 
