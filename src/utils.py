@@ -30,7 +30,13 @@ def convert_messages_to_ollama(messages):
         content = m.get("content")
 
         if role == "tool":
-            tool_msg = {"role": "tool", "content": content if isinstance(content, str) else ""}
+            if isinstance(content, str):
+                tool_content = content
+            elif content is not None:
+                tool_content = orjson.dumps(content).decode()
+            else:
+                tool_content = ""
+            tool_msg = {"role": "tool", "content": tool_content}
             tc_id = m.get("tool_call_id")
             if tc_id:
                 tool_msg["tool_call_id"] = tc_id
@@ -76,16 +82,33 @@ def convert_messages_to_ollama(messages):
                 )
             append({"role": "system", "content": content})
         elif role == "user":
-            if isinstance(content, str) and content.strip():
+            if isinstance(content, str):
                 append({"role": "user", "content": content})
             elif isinstance(content, list):
+                ollama_content = []
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("type") == "text":
+                        ollama_content.append(item)
+                    elif item.get("type") == "image_url":
+                        url = item.get("image_url", {}).get("url", "")
+                        ollama_content.append({"type": "image_url", "image_url": url})
                 text = " ".join(
                     item.get("text", "")
-                    for item in content
+                    for item in ollama_content
                     if isinstance(item, dict) and item.get("type") == "text"
                 )
-                if text.strip():
-                    append({"role": "user", "content": text})
+                images = [
+                    item.get("image_url", "")
+                    for item in ollama_content
+                    if isinstance(item, dict) and item.get("type") == "image_url"
+                ]
+                if text or images:
+                    msg = {"role": "user", "content": text}
+                    if images:
+                        msg["images"] = images
+                    append(msg)
     return result
 
 

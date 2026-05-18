@@ -1,6 +1,7 @@
 import os
 import time
 import asyncio
+import collections
 import contextlib
 
 import orjson
@@ -72,7 +73,7 @@ _BAD_JSON_RESPONSE = Response(status_code=400, content=b'{"error":"Invalid JSON"
 
 # ─── Async-safe log queue (non-blocking) ───
 _log_queue = asyncio.Queue(maxsize=200)
-_request_log = []
+_request_log = collections.deque(maxlen=500)
 
 
 def _status_color(code):
@@ -290,6 +291,21 @@ async def health_check(request: Request):
 @app.post("/v1/chat/completions")
 async def openai_completions(request: Request):
     state = _get_state(request)
+
+    if not state.is_warm:
+        return Response(
+            status_code=503,
+            content=orjson.dumps({
+                "error": {
+                    "message": "Model is still loading. Please try again shortly.",
+                    "type": "server_error",
+                    "param": None,
+                    "code": "model_loading",
+                },
+            }),
+            media_type="application/json",
+        )
+
     request_id = _fast_id()
     start_time = time.monotonic()
 
@@ -331,10 +347,12 @@ async def openai_completions(request: Request):
     try:
         created = int(time.time())
         if not is_streaming:
-            return await _handle_non_stream(state, request_id, ollama_payload_dict, start_time, created)
-        return _handle_stream(state, request_id, ollama_payload_dict, start_time)
-    finally:
-        state.semaphore.release()
+            try:
+                return await _handle_non_stream(state, request_id, ollama_payload_dict, start_time, created)
+            finally:
+                state.semaphore.release()
+        else:
+            return _handle_stream(state, request_id, ollama_payload_dict, start_time)
 
 
 async def _handle_non_stream(state, request_id, ollama_payload, start_time, created):
@@ -430,6 +448,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
     async def stream_generator():
         first_chunk = True
         has_tool_calls = False
+        tool_call_index = 0
         prompt_tokens = completion_tokens = 0
 
         try:
@@ -518,10 +537,26 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                             if tool_calls:
                                 try:
                                     has_tool_calls = True
-                                    delta["tool_calls"] = format_tool_calls_openai(list(tool_calls))
+                                    formatted = []
                                     for tc in tool_calls:
                                         tc_name = tc.get("function", {}).get("name") or "?"
                                         logger.info(f"[{request_id}] Tool: {tc_name}")
+                                        tc_args = tc.get("function", {}).get("arguments", "")
+                                        if isinstance(tc_args, str):
+                                            tc_args_json = tc_args
+                                        else:
+                                            tc_args_json = orjson.dumps(tc_args).decode() if tc_args else ""
+                                        formatted.append({
+                                            "index": tool_call_index,
+                                            "id": tc.get("id") or f"call_{_fast_id()}",
+                                            "type": "function",
+                                            "function": {
+                                                "name": tc_name,
+                                                "arguments": tc_args_json,
+                                            },
+                                        })
+                                        tool_call_index += 1
+                                    delta["tool_calls"] = formatted
                                 except Exception as e:
                                     logger.error(f"[{request_id}] Tool format error: {e}")
                                     delta["tool_calls"] = []
@@ -601,6 +636,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
             await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
             logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
             yield _SSE_DONE
+            state.semaphore.release()
 
     return StreamingResponse(
         stream_generator(),
