@@ -34,6 +34,10 @@ OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
 REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")
 
+# ═══ Chunk Dumping for Debug ═══
+DUMP_CHUNKS = os.environ.get("DUMP_CHUNKS", "True").lower() in ("true", "1", "yes")
+CHUNK_DUMP_FILE = os.environ.get("CHUNK_DUMP_FILE", "/tmp/gateway-chunks-dump.jsonl")
+
 # Precompute ollama options (never changes at runtime)
 _OLLAMA_OPTS_BASE = {
     "num_ctx": NUM_CTX,
@@ -74,6 +78,32 @@ _BAD_JSON_RESPONSE = Response(status_code=400, content=b'{"error":"Invalid JSON"
 # ─── Async-safe log queue (non-blocking) ───
 _log_queue = asyncio.Queue(maxsize=200)
 _request_log = collections.deque(maxlen=500)
+
+# ─── Chunk dump queue (non-blocking) ───
+_chunk_queue = asyncio.Queue(maxsize=2000)
+
+
+async def _chunk_writer():
+    with open(CHUNK_DUMP_FILE, "a") as f:
+        buf = []
+        try:
+            while True:
+                try:
+                    line = await asyncio.wait_for(_chunk_queue.get(), timeout=2.0)
+                    buf.append(line + "\n")
+                    if len(buf) >= 20:
+                        f.writelines(buf)
+                        f.flush()
+                        buf.clear()
+                except asyncio.TimeoutError:
+                    if buf:
+                        f.writelines(buf)
+                        f.flush()
+                        buf.clear()
+        except (asyncio.CancelledError, RuntimeError):
+            if buf:
+                f.writelines(buf)
+                f.flush()
 
 
 def _status_color(code):
@@ -177,12 +207,13 @@ def _fast_id():
 
 # ─── State ───
 class GatewayState:
-    __slots__ = ("http_client", "semaphore", "log_writer_task", "warmup_task", "is_warm")
+    __slots__ = ("http_client", "semaphore", "log_writer_task", "chunk_writer_task", "warmup_task", "is_warm")
 
     def __init__(self):
         self.http_client = None
         self.semaphore = asyncio.Semaphore(MAX_CONCURRENT)
         self.log_writer_task = None
+        self.chunk_writer_task = None
         self.warmup_task = None
         self.is_warm = False
 
@@ -229,6 +260,7 @@ async def lifespan(app: FastAPI):
         ),
     )
     state.log_writer_task = asyncio.create_task(_log_writer())
+    state.chunk_writer_task = asyncio.create_task(_chunk_writer())
     state.warmup_task = asyncio.create_task(_warmup(state))
 
     app.state.gw = state
@@ -250,7 +282,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for task in (state.warmup_task, state.log_writer_task):
+    for task in (state.warmup_task, state.log_writer_task, state.chunk_writer_task):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -505,6 +537,20 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         except Exception as e:
                             logger.error(f"[{request_id}] Parse fail: {e} | line={raw[:100]}")
                             continue
+
+                        # ═══ DUMP RAW CHUNK TO FILE ═══
+                        if DUMP_CHUNKS:
+                            try:
+                                dump_obj = {
+                                    "ts": time.time(),
+                                    "req_id": request_id,
+                                    "stream_elapsed_ms": round((time.monotonic() - start_time) * 1000),
+                                    "ollama_data": data
+                                }
+                                await _chunk_queue.put(orjson.dumps(dump_obj).decode())
+                            except Exception:
+                                pass
+                        # ═══ END DUMP ═══
 
                         if data.get("error"):
                             logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
