@@ -344,15 +344,14 @@ async def openai_completions(request: Request):
     if tool_choice:
         ollama_payload_dict["tool_choice"] = tool_choice
 
-    try:
-        created = int(time.time())
-        if not is_streaming:
-            try:
-                return await _handle_non_stream(state, request_id, ollama_payload_dict, start_time, created)
-            finally:
-                state.semaphore.release()
-        else:
-            return _handle_stream(state, request_id, ollama_payload_dict, start_time)
+    created = int(time.time())
+    if not is_streaming:
+        try:
+            return await _handle_non_stream(state, request_id, ollama_payload_dict, start_time, created)
+        finally:
+            state.semaphore.release()
+    else:
+        return _handle_stream(state, request_id, ollama_payload_dict, start_time)
 
 
 async def _handle_non_stream(state, request_id, ollama_payload, start_time, created):
@@ -460,6 +459,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     elapsed = round(time.monotonic() - start_time, 2)
                     await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
                     yield _SSE_UPSTREAM_ERR
+                    yield _SSE_DONE
                     return
 
                 # Background reader feeds lines into a queue so we can wait_with_timeout
@@ -619,23 +619,29 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         },
                     }) + b"\n\n"
 
+                # Happy path done
+                yield _SSE_DONE
+
         except httpx.RemoteProtocolError:
             logger.error(f"[{request_id}] Ollama connection reset")
             yield b"data: " + orjson.dumps({"error": {"message": "Upstream connection reset", "type": "upstream_error"}}) + b"\n\n"
+            yield _SSE_DONE
         except httpx.ConnectError:
             logger.error(f"[{request_id}] Cannot connect to Ollama")
             yield b"data: " + orjson.dumps({"error": {"message": "Cannot connect to upstream", "type": "upstream_error"}}) + b"\n\n"
+            yield _SSE_DONE
         except httpx.ReadTimeout:
             logger.error(f"[{request_id}] Ollama read timeout")
             yield b"data: " + orjson.dumps({"error": {"message": "Upstream read timeout", "type": "upstream_error"}}) + b"\n\n"
+            yield _SSE_DONE
         except Exception as e:
             logger.error(f"[{request_id}] STREAM CRASH: {e}")
             yield b"data: " + orjson.dumps({"error": {"message": "Internal server error", "type": "server_error"}}) + b"\n\n"
+            yield _SSE_DONE
         finally:
             elapsed = round(time.monotonic() - start_time, 2)
             await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
             logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
-            yield _SSE_DONE
             state.semaphore.release()
 
     return StreamingResponse(
