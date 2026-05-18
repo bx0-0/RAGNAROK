@@ -487,7 +487,8 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                             keepalive_count += 1
                             if keepalive_count > 120:
                                 yield b"data: " + orjson.dumps({"error": {"message": "Upstream timeout", "type": "timeout"}}) + b"\n\n"
-                                break
+                                yield _SSE_DONE
+                                return
                             yield _SSE_KEEPALIVE
                             continue
 
@@ -507,7 +508,8 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         if data.get("error"):
                             logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
                             yield b"data: " + orjson.dumps({"error": {"message": data["error"]}}) + b"\n\n"
-                            break
+                            yield _SSE_DONE
+                            return
 
                         message = data.get("message", {})
 
