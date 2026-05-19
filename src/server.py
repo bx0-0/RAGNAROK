@@ -33,6 +33,7 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
 REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")
+MAX_STREAM_SECONDS = int(os.environ.get("MAX_STREAM_SECONDS", "1800"))  # 30 دقيقة
 
 # Precompute ollama options (never changes at runtime)
 _OLLAMA_OPTS_BASE = {
@@ -443,7 +444,7 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
     request_id_str = f"chatcmpl-{request_id}"
     created = int(time.time())
 
-    # Pre-compute static SSE envelope (prefix/suffix around delta — skips re-serializing id/object/created/model/index/finish_reason every chunk)
+    # Pre-compute static SSE envelope (prefix/suffix around delta)
     _tpl = orjson.dumps({
         "id": request_id_str,
         "object": "chat.completion.chunk",
@@ -461,6 +462,8 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
         has_tool_calls = False
         tool_call_index = 0
         prompt_tokens = completion_tokens = 0
+        released = False
+        check_disconnect_counter = 0
 
         try:
             async with state.http_client.stream(
@@ -474,8 +477,6 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
                     yield _SSE_DONE
                     return
 
-                # Background reader feeds lines into a queue so we can wait_with_timeout
-                # without ever cancelling the httpx socket read.
                 line_q = asyncio.Queue(maxsize=256)
                 reader_error = [None]
 
@@ -486,14 +487,27 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
                     except Exception as e:
                         reader_error[0] = e
                     finally:
-                        await line_q.put(None)  # sentinel
+                        await line_q.put(None)
 
                 reader = asyncio.create_task(_reader())
                 keepalive_count = 0
                 graceful = False
-                check_disconnect_counter = 0
                 try:
                     while True:
+                        # ═══ Hard Timeout ═══
+                        stream_elapsed = time.monotonic() - start_time
+                        if stream_elapsed > MAX_STREAM_SECONDS:
+                            logger.warning(f"[{request_id}] Hard timeout after {int(stream_elapsed)}s")
+                            yield b"data: " + orjson.dumps({
+                                "error": {
+                                    "message": f"Generation exceeded {MAX_STREAM_SECONDS}s limit",
+                                    "type": "timeout",
+                                }
+                            }) + b"\n\n"
+                            yield _SSE_DONE
+                            return
+                        # ═══ End Hard Timeout ═══
+
                         try:
                             raw = await asyncio.wait_for(line_q.get(), timeout=10.0)
                         except asyncio.TimeoutError:
@@ -509,14 +523,17 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
                             break
                         keepalive_count = 0
 
-                        # ═══ Check if client disconnected every 5 chunks ═══
+                        # ═══ Safe Client Disconnect Check ═══
                         check_disconnect_counter += 1
-                        if check_disconnect_counter >= 5:
+                        if check_disconnect_counter >= 10:
                             check_disconnect_counter = 0
-                            if await request.is_disconnected():
-                                logger.warning(f"[{request_id}] Client disconnected! Aborting.")
-                                break
-                        # ═══ End disconnect check ═══
+                            try:
+                                if await request.is_disconnected():
+                                    logger.warning(f"[{request_id}] Client disconnected! Aborting generation to free GPU.")
+                                    return  # return مش break! عشان نحرر الـ Semaphore فوراً
+                            except Exception:
+                                pass
+                        # ═══ End Disconnect Check ═══
 
                         if not raw.strip():
                             continue
@@ -624,7 +641,7 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
                     logger.error(f"[{request_id}] Reader error: {reader_error[0]}")
                     yield b"data: " + orjson.dumps({"error": {"message": str(reader_error[0]), "type": "upstream_error"}}) + b"\n\n"
 
-                # Fallback: Ollama closed without done:true — send truncated finish
+                # Fallback: Ollama closed without done:true
                 if not graceful and not reader_error[0]:
                     yield b"data: " + orjson.dumps({
                         "id": request_id_str,
@@ -643,7 +660,6 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
                         },
                     }) + b"\n\n"
 
-                # Happy path done
                 yield _SSE_DONE
 
         except httpx.RemoteProtocolError:
@@ -663,10 +679,12 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
             yield b"data: " + orjson.dumps({"error": {"message": "Internal server error", "type": "server_error"}}) + b"\n\n"
             yield _SSE_DONE
         finally:
-            elapsed = round(time.monotonic() - start_time, 2)
-            await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
-            logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
-            state.semaphore.release()
+            if not released:
+                released = True
+                elapsed = round(time.monotonic() - start_time, 2)
+                await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
+                logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
+                state.semaphore.release()
 
     return StreamingResponse(
         stream_generator(),
