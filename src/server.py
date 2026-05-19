@@ -34,10 +34,6 @@ OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
 REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")
 
-# ═══ Chunk Dumping for Debug ═══
-DUMP_CHUNKS = os.environ.get("DUMP_CHUNKS", "True").lower() in ("true", "1", "yes")
-CHUNK_DUMP_FILE = os.environ.get("CHUNK_DUMP_FILE", "/tmp/gateway-chunks-dump.jsonl")
-
 # Precompute ollama options (never changes at runtime)
 _OLLAMA_OPTS_BASE = {
     "num_ctx": NUM_CTX,
@@ -78,32 +74,6 @@ _BAD_JSON_RESPONSE = Response(status_code=400, content=b'{"error":"Invalid JSON"
 # ─── Async-safe log queue (non-blocking) ───
 _log_queue = asyncio.Queue(maxsize=200)
 _request_log = collections.deque(maxlen=500)
-
-# ─── Chunk dump queue (non-blocking) ───
-_chunk_queue = asyncio.Queue(maxsize=2000)
-
-
-async def _chunk_writer():
-    with open(CHUNK_DUMP_FILE, "a") as f:
-        buf = []
-        try:
-            while True:
-                try:
-                    line = await asyncio.wait_for(_chunk_queue.get(), timeout=2.0)
-                    buf.append(line + "\n")
-                    if len(buf) >= 20:
-                        f.writelines(buf)
-                        f.flush()
-                        buf.clear()
-                except asyncio.TimeoutError:
-                    if buf:
-                        f.writelines(buf)
-                        f.flush()
-                        buf.clear()
-        except (asyncio.CancelledError, RuntimeError):
-            if buf:
-                f.writelines(buf)
-                f.flush()
 
 
 def _status_color(code):
@@ -207,13 +177,12 @@ def _fast_id():
 
 # ─── State ───
 class GatewayState:
-    __slots__ = ("http_client", "semaphore", "log_writer_task", "chunk_writer_task", "warmup_task", "is_warm")
+    __slots__ = ("http_client", "semaphore", "log_writer_task", "warmup_task", "is_warm")
 
     def __init__(self):
         self.http_client = None
         self.semaphore = asyncio.Semaphore(MAX_CONCURRENT)
         self.log_writer_task = None
-        self.chunk_writer_task = None
         self.warmup_task = None
         self.is_warm = False
 
@@ -260,7 +229,6 @@ async def lifespan(app: FastAPI):
         ),
     )
     state.log_writer_task = asyncio.create_task(_log_writer())
-    state.chunk_writer_task = asyncio.create_task(_chunk_writer())
     state.warmup_task = asyncio.create_task(_warmup(state))
 
     app.state.gw = state
@@ -282,7 +250,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for task in (state.warmup_task, state.log_writer_task, state.chunk_writer_task):
+    for task in (state.warmup_task, state.log_writer_task):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -359,8 +327,20 @@ async def openai_completions(request: Request):
         await log_request(request_id, "POST", "/v1/chat/completions", 400, 0, 0, 0, "BAD_JSON")
         return _BAD_JSON_RESPONSE
 
+    # ═══ Log request info for debugging ═══
+    tools = body.get("tools")
+    msg_count = len(body.get("messages", []))
+    total_chars = sum(len(str(m.get("content", ""))) for m in body.get("messages", []))
+    client_name = request.headers.get("user-agent", "unknown")[:40]
+    tool_names = [t.get("function", {}).get("name") for t in tools if isinstance(t, dict)] if tools else []
+    logger.info(
+        f"[{request_id}] Client={client_name} | Msgs={msg_count} | "
+        f"Chars={total_chars} | Tools={tool_names}"
+    )
+    # ═══ End log ═══
+
     is_streaming = body.get("stream", False)
-    ollama_messages = convert_messages_to_ollama(body.get("messages", []))
+    ollama_messages = convert_messages_to_ollama(body.get("messages", []), has_tools=bool(tools))
 
     # Build ollama payload with orjson
     ollama_payload_dict = {
@@ -370,7 +350,6 @@ async def openai_completions(request: Request):
         "keep_alive": KEEP_ALIVE,
         "options": _OLLAMA_OPTS,
     }
-    tools = body.get("tools")
     if tools:
         ollama_payload_dict["tools"] = tools
     tool_choice = body.get("tool_choice")
@@ -384,7 +363,7 @@ async def openai_completions(request: Request):
         finally:
             state.semaphore.release()
     else:
-        return _handle_stream(state, request_id, ollama_payload_dict, start_time)
+        return _handle_stream(state, request, request_id, ollama_payload_dict, start_time)
 
 
 async def _handle_non_stream(state, request_id, ollama_payload, start_time, created):
@@ -460,7 +439,7 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
 
 
 
-def _handle_stream(state, request_id, ollama_payload, start_time):
+def _handle_stream(state, request, request_id, ollama_payload, start_time):
     request_id_str = f"chatcmpl-{request_id}"
     created = int(time.time())
 
@@ -512,6 +491,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                 reader = asyncio.create_task(_reader())
                 keepalive_count = 0
                 graceful = False
+                check_disconnect_counter = 0
                 try:
                     while True:
                         try:
@@ -529,6 +509,15 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                             break
                         keepalive_count = 0
 
+                        # ═══ Check if client disconnected every 5 chunks ═══
+                        check_disconnect_counter += 1
+                        if check_disconnect_counter >= 5:
+                            check_disconnect_counter = 0
+                            if await request.is_disconnected():
+                                logger.warning(f"[{request_id}] Client disconnected! Aborting.")
+                                break
+                        # ═══ End disconnect check ═══
+
                         if not raw.strip():
                             continue
 
@@ -537,20 +526,6 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         except Exception as e:
                             logger.error(f"[{request_id}] Parse fail: {e} | line={raw[:100]}")
                             continue
-
-                        # ═══ DUMP RAW CHUNK TO FILE ═══
-                        if DUMP_CHUNKS:
-                            try:
-                                dump_obj = {
-                                    "ts": time.time(),
-                                    "req_id": request_id,
-                                    "stream_elapsed_ms": round((time.monotonic() - start_time) * 1000),
-                                    "ollama_data": data
-                                }
-                                await _chunk_queue.put(orjson.dumps(dump_obj).decode())
-                            except Exception:
-                                pass
-                        # ═══ END DUMP ═══
 
                         if data.get("error"):
                             logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
