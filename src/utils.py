@@ -22,9 +22,21 @@ def extract_text_content(content):
     return str(content)
 
 
-def convert_messages_to_ollama(messages):
+def convert_messages_to_ollama(messages, has_tools=False):
     result = []
     append = result.append
+
+    # ═══ System Prompt للـ Tools — يمنع الموديل يكتب ملفات كبيرة مرة واحدة ═══
+    if has_tools:
+        tool_system_prompt = (
+            "CRITICAL: When using tools that write to files, you MUST write the file "
+            "in SMALL CHUNKS (max 50 lines at a time). Do NOT attempt to write the "
+            "entire file content in a single tool call. Write the first chunk, then "
+            "stop, and you will be asked to continue. This is a system requirement."
+        )
+        append({"role": "system", "content": tool_system_prompt})
+    # ═══ End System Prompt ═══
+
     for m in messages:
         role = m["role"]
         content = m.get("content")
@@ -42,7 +54,6 @@ def convert_messages_to_ollama(messages):
                 tool_msg["tool_call_id"] = tc_id
             append(tool_msg)
         elif role == "assistant":
-            # Extract text from content
             if isinstance(content, str):
                 text = content
             elif isinstance(content, list):
@@ -80,6 +91,8 @@ def convert_messages_to_ollama(messages):
                     for item in content
                     if isinstance(item, dict) and item.get("type") == "text"
                 )
+            elif content is None:
+                content = ""
             append({"role": "system", "content": content})
         elif role == "user":
             if isinstance(content, str):
@@ -109,6 +122,10 @@ def convert_messages_to_ollama(messages):
                     if images:
                         msg["images"] = images
                     append(msg)
+                else:
+                    append({"role": "user", "content": ""})
+            else:
+                append({"role": "user", "content": ""})
     return result
 
 
@@ -135,5 +152,3 @@ def format_tool_calls_openai(ollama_tcs):
         except Exception as e:
             logger.error(f"Tool format error: {e}")
     return openai_tcs
-
-
