@@ -364,7 +364,7 @@ async def openai_completions(request: Request):
         finally:
             state.semaphore.release()
     else:
-        return _handle_stream(state, request, request_id, ollama_payload_dict, start_time)
+        return _handle_stream(state, request_id, ollama_payload_dict, start_time)
 
 
 async def _handle_non_stream(state, request_id, ollama_payload, start_time, created):
@@ -440,11 +440,11 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
 
 
 
-def _handle_stream(state, request, request_id, ollama_payload, start_time):
+def _handle_stream(state, request_id, ollama_payload, start_time):
     request_id_str = f"chatcmpl-{request_id}"
     created = int(time.time())
 
-    # Pre-compute static SSE envelope (prefix/suffix around delta)
+    # Pre-compute static SSE envelope
     _tpl = orjson.dumps({
         "id": request_id_str,
         "object": "chat.completion.chunk",
@@ -463,7 +463,6 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
         tool_call_index = 0
         prompt_tokens = completion_tokens = 0
         released = False
-        check_disconnect_counter = 0
 
         try:
             async with state.http_client.stream(
@@ -522,18 +521,6 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
                         if raw is None:
                             break
                         keepalive_count = 0
-
-                        # ═══ Safe Client Disconnect Check ═══
-                        check_disconnect_counter += 1
-                        if check_disconnect_counter >= 10:
-                            check_disconnect_counter = 0
-                            try:
-                                if await request.is_disconnected():
-                                    logger.warning(f"[{request_id}] Client disconnected! Aborting generation to free GPU.")
-                                    return  # return مش break! عشان نحرر الـ Semaphore فوراً
-                            except Exception:
-                                pass
-                        # ═══ End Disconnect Check ═══
 
                         if not raw.strip():
                             continue
@@ -641,7 +628,6 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
                     logger.error(f"[{request_id}] Reader error: {reader_error[0]}")
                     yield b"data: " + orjson.dumps({"error": {"message": str(reader_error[0]), "type": "upstream_error"}}) + b"\n\n"
 
-                # Fallback: Ollama closed without done:true
                 if not graceful and not reader_error[0]:
                     yield b"data: " + orjson.dumps({
                         "id": request_id_str,
@@ -662,6 +648,9 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
 
                 yield _SSE_DONE
 
+        except asyncio.CancelledError:
+            # الكلاينت قفل الاتصال فجأة
+            logger.warning(f"[{request_id}] Stream cancelled (client disconnected)")
         except httpx.RemoteProtocolError:
             logger.error(f"[{request_id}] Ollama connection reset")
             yield b"data: " + orjson.dumps({"error": {"message": "Upstream connection reset", "type": "upstream_error"}}) + b"\n\n"
@@ -681,10 +670,16 @@ def _handle_stream(state, request, request_id, ollama_payload, start_time):
         finally:
             if not released:
                 released = True
-                elapsed = round(time.monotonic() - start_time, 2)
-                await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
-                logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
+                # ═══ الأهم: حرر السيمافور الأول! (Synchronous مش بيحتاج await) ═══
                 state.semaphore.release()
+                
+                # وبعدين سجل اللوج جوه try عشان لو الـ Task اتعملها Cancel متهنجش
+                elapsed = round(time.monotonic() - start_time, 2)
+                try:
+                    await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
+                    logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
+                except asyncio.CancelledError:
+                    pass
 
     return StreamingResponse(
         stream_generator(),
