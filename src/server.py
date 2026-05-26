@@ -30,11 +30,20 @@ FLASH_ATTN = os.environ.get("FLASH_ATTN", "True").lower() in ("true", "1", "yes"
 NUM_GPU = int(os.environ.get("NUM_GPU", "-1"))
 KEEP_ALIVE = os.environ.get("KEEP_ALIVE", "60m")
 PORT = int(os.environ.get("PORT", "8000"))
-OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
 REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")
-MAX_STREAM_SECONDS = int(os.environ.get("MAX_STREAM_SECONDS", "1800"))  # 30 دقيقة
+MAX_STREAM_SECONDS = int(os.environ.get("MAX_STREAM_SECONDS", "1800"))  # 30 min
+HTTP_CONNECT_TIMEOUT = float(os.environ.get("HTTP_CONNECT_TIMEOUT", "60.0"))
+HTTP_READ_TIMEOUT = float(os.environ.get("HTTP_READ_TIMEOUT", "900.0"))
+HTTP_WRITE_TIMEOUT = float(os.environ.get("HTTP_WRITE_TIMEOUT", "60.0"))
+HTTP_POOL_TIMEOUT = float(os.environ.get("HTTP_POOL_TIMEOUT", "900.0"))
+MAX_CONNECTIONS = int(os.environ.get("MAX_CONNECTIONS", "2000"))
+MAX_KEEPALIVE_CONNECTIONS = int(os.environ.get("MAX_KEEPALIVE_CONNECTIONS", "500"))
+KEEPALIVE_EXPIRY = int(os.environ.get("KEEPALIVE_EXPIRY", "300"))
+MAX_QUEUE_SIZE = int(os.environ.get("MAX_QUEUE_SIZE", "256"))
+MAX_KEEPALIVE_PINGS = int(os.environ.get("MAX_KEEPALIVE_PINGS", "120"))
 
 # Precompute ollama options (never changes at runtime)
 _OLLAMA_OPTS_BASE = {
@@ -222,11 +231,11 @@ async def _warmup(state: GatewayState):
 async def lifespan(app: FastAPI):
     state = GatewayState()
     state.http_client = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=60.0, read=900.0, write=60.0, pool=900.0),
+        timeout=httpx.Timeout(connect=HTTP_CONNECT_TIMEOUT, read=HTTP_READ_TIMEOUT, write=HTTP_WRITE_TIMEOUT, pool=HTTP_POOL_TIMEOUT),
         limits=httpx.Limits(
-            max_connections=2000,
-            max_keepalive_connections=500,
-            keepalive_expiry=300,
+            max_connections=MAX_CONNECTIONS,
+            max_keepalive_connections=MAX_KEEPALIVE_CONNECTIONS,
+            keepalive_expiry=KEEPALIVE_EXPIRY,
         ),
     )
     state.log_writer_task = asyncio.create_task(_log_writer())
@@ -291,6 +300,40 @@ async def health_check(request: Request):
     }
 
 
+@app.post("/v1/embeddings")
+async def openai_embeddings(request: Request):
+    state = _get_state(request)
+    try:
+        body = orjson.loads(await request.body())
+    except Exception:
+        return Response(status_code=400, content=b'{"error":"Invalid JSON"}', media_type="application/json")
+
+    model = body.get("model", MODEL_NAME)
+    input_data = body.get("input")
+    if not input_data:
+        return Response(
+            status_code=400,
+            content=orjson.dumps({"error": {"message": "'input' is required", "type": "invalid_request_error"}}),
+            media_type="application/json",
+        )
+
+    # Normalize input to list
+    if isinstance(input_data, str):
+        input_data = [input_data]
+
+    payload = {"model": model, "input": input_data}
+
+    try:
+        resp = await state.http_client.post(f"{OLLAMA_BASE_URL}/api/embed", json=payload)
+        return Response(status_code=resp.status_code, content=resp.content, media_type="application/json")
+    except Exception as e:
+        return Response(
+            status_code=502,
+            content=orjson.dumps({"error": {"message": str(e), "type": "upstream_error"}}),
+            media_type="application/json",
+        )
+
+
 @app.post("/v1/chat/completions")
 async def openai_completions(request: Request):
     state = _get_state(request)
@@ -329,6 +372,17 @@ async def openai_completions(request: Request):
         state.semaphore.release()
         await log_request(request_id, "POST", "/v1/chat/completions", 400, 0, 0, 0, "BAD_JSON")
         return _BAD_JSON_RESPONSE
+
+    # ═══ Validate request body ═══
+    messages = body.get("messages")
+    if not messages or not isinstance(messages, list) or len(messages) == 0:
+        state.semaphore.release()
+        await log_request(request_id, "POST", "/v1/chat/completions", 400, 0, 0, 0, "MISSING_MESSAGES")
+        return Response(
+            status_code=400,
+            content=orjson.dumps({"error": {"message": "'messages' must be a non-empty list", "type": "invalid_request_error"}}),
+            media_type="application/json",
+        )
 
     # ═══ Log request info for debugging ═══
     tools = body.get("tools")
@@ -370,7 +424,17 @@ async def openai_completions(request: Request):
     created = int(time.time())
     if not is_streaming:
         try:
-            return await _handle_non_stream(state, request_id, ollama_payload_dict, start_time, created, active_model)
+            result = await _handle_non_stream(state, request_id, ollama_payload_dict, start_time, created, active_model)
+            return result
+        except Exception as e:
+            logger.error(f"[{request_id}] Non-stream handler crashed: {e}")
+            elapsed = round(time.monotonic() - start_time, 2)
+            await log_request(request_id, "POST", "/v1/chat/completions", 500, elapsed, 0, 0, f"CRASH:{str(e)[:40]}")
+            return Response(
+                status_code=500,
+                content=orjson.dumps({"error": {"message": "Internal server error", "type": "server_error"}}),
+                media_type="application/json",
+            )
         finally:
             state.semaphore.release()
     else:
@@ -391,7 +455,7 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
             if response.status_code != 200:
                 err = await response.aread()
                 elapsed = round(time.monotonic() - start_time, 2)
-                # ═══ إظهار الـ Error الحقيقي من Ollama ═══
+                # Log the actual upstream error from Ollama
                 logger.error(f"[{request_id}] Ollama Upstream Error: {err.decode()[:300]}")
                 await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
                 return Response(status_code=response.status_code, content=err, media_type="application/json")
@@ -484,10 +548,10 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                 if response.status_code != 200:
                     err_body = await response.aread()
                     elapsed = round(time.monotonic() - start_time, 2)
-                    # ═══ إظهار الـ Error الحقيقي من Ollama ═══
+                    # Log the actual upstream error from Ollama
                     logger.error(f"[{request_id}] Ollama Upstream Error: {err_body.decode()[:300]}")
                     await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
-                    # نبعت الـ Error الحقيقي للكلاينت عشان يفهم السبب
+                    # Send the real error to the client so they understand the issue
                     yield b"data: " + err_body + b"\n\n"
                     yield _SSE_DONE
                     return
@@ -666,7 +730,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                 yield _SSE_DONE
 
         except asyncio.CancelledError:
-            # الكلاينت قفل الاتصال فجأة
+            # Client disconnected
             logger.warning(f"[{request_id}] Stream cancelled (client disconnected)")
         except httpx.RemoteProtocolError:
             logger.error(f"[{request_id}] Ollama connection reset")
@@ -687,15 +751,17 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
         finally:
             if not released:
                 released = True
-                # ═══ الأهم: حرر السيمافور الأول! (Synchronous مش بيحتاج await) ═══
+                # Release the semaphore
                 state.semaphore.release()
                 
-                # وبعدين سجل اللوج جوه try عشان لو الـ Task اتعملها Cancel متهنجش
+                # Log inside try block so it does not crash if the task is cancelled
                 elapsed = round(time.monotonic() - start_time, 2)
                 try:
                     await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
                     logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
                 except asyncio.CancelledError:
+                    # Shield: log on stderr as fallback so we never lose the record
+                    logger.warning(f"[{request_id}] Cancelled before logging | {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
                     pass
 
     return StreamingResponse(

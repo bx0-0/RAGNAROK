@@ -26,7 +26,7 @@ def convert_messages_to_ollama(messages, has_tools=False):
     result = []
     append = result.append
 
-    # ═══ System Prompt للـ Tools — يمنع الموديل يكتب ملفات كبيرة مرة واحدة ═══
+    # System prompt for tools — prevents the model from writing large files at once
     if has_tools:
         tool_system_prompt = (
             "CRITICAL: When using tools that write to files, you MUST write the file "
@@ -35,7 +35,7 @@ def convert_messages_to_ollama(messages, has_tools=False):
             "stop, and you will be asked to continue. This is a system requirement."
         )
         append({"role": "system", "content": tool_system_prompt})
-    # ═══ End System Prompt ═══
+    # End system prompt
 
     for m in messages:
         role = m["role"]
@@ -106,12 +106,12 @@ def convert_messages_to_ollama(messages, has_tools=False):
                         ollama_content.append(item)
                     elif item.get("type") == "image_url":
                         url = item.get("image_url", {}).get("url", "")
-                        # ═══ تنظيف الـ Base64 Prefix عشان Ollama يقبله ═══
+                        # Strip base64 prefix so Ollama accepts it
                         if url.startswith("data:image/"):
                             base64_part = url.split(",", 1)
                             if len(base64_part) > 1:
-                                url = base64_part[1]  # خد الـ Base64 النظيف فقط
-                        # ═══ نهاية التنظيف ═══
+                                url = base64_part[1]  # Keep only clean base64
+                        # End of cleanup
                         ollama_content.append({"type": "image_url", "image_url": url})
                 text = " ".join(
                     item.get("text", "")
