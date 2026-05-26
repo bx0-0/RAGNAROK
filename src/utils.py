@@ -106,6 +106,12 @@ def convert_messages_to_ollama(messages, has_tools=False):
                         ollama_content.append(item)
                     elif item.get("type") == "image_url":
                         url = item.get("image_url", {}).get("url", "")
+                        # ═══ تنظيف الـ Base64 Prefix عشان Ollama يقبله ═══
+                        if url.startswith("data:image/"):
+                            base64_part = url.split(",", 1)
+                            if len(base64_part) > 1:
+                                url = base64_part[1]  # خد الـ Base64 النظيف فقط
+                        # ═══ نهاية التنظيف ═══
                         ollama_content.append({"type": "image_url", "image_url": url})
                 text = " ".join(
                     item.get("text", "")
