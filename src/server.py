@@ -63,7 +63,6 @@ _OLLAMA_OPTS_WARMUP = {
 # Precompute static SSE frame bytes
 _SSE_DONE = b"data: [DONE]\n\n"
 _SSE_KEEPALIVE = b': ping\n\n'
-_SSE_UPSTREAM_ERR = b'data: {"error":{"message":"Upstream error"}}\n\ndata: [DONE]\n\n'
 _RATE_LIMIT_RESPONSE = Response(status_code=429, content=orjson.dumps({
     "error": {
         "message": "Server is busy. Try again shortly.",
@@ -392,6 +391,8 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
             if response.status_code != 200:
                 err = await response.aread()
                 elapsed = round(time.monotonic() - start_time, 2)
+                # ═══ إظهار الـ Error الحقيقي من Ollama ═══
+                logger.error(f"[{request_id}] Ollama Upstream Error: {err.decode()[:300]}")
                 await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
                 return Response(status_code=response.status_code, content=err, media_type="application/json")
 
@@ -481,9 +482,13 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                 json=ollama_payload,
             ) as response:
                 if response.status_code != 200:
+                    err_body = await response.aread()
                     elapsed = round(time.monotonic() - start_time, 2)
+                    # ═══ إظهار الـ Error الحقيقي من Ollama ═══
+                    logger.error(f"[{request_id}] Ollama Upstream Error: {err_body.decode()[:300]}")
                     await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
-                    yield _SSE_UPSTREAM_ERR
+                    # نبعت الـ Error الحقيقي للكلاينت عشان يفهم السبب
+                    yield b"data: " + err_body + b"\n\n"
                     yield _SSE_DONE
                     return
 
@@ -579,7 +584,8 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                                     formatted = []
                                     for tc in tool_calls:
                                         tc_name = tc.get("function", {}).get("name") or "?"
-                                        logger.info(f"[{request_id}] Tool: {tc_name}")
+                                        # ═══ لوج اسم التول بشكل واضح ═══
+                                        logger.info(f"[{request_id}] 🔧 Tool Call: {tc_name}")
                                         tc_args = tc.get("function", {}).get("arguments", "")
                                         if isinstance(tc_args, str):
                                             tc_args_json = tc_args
