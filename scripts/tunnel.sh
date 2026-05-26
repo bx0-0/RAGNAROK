@@ -42,7 +42,7 @@ if [ "$SERVER_READY" -ne 1 ]; then
 fi
 echo " ✅"
 
-# ---- Wait for model warmup ----
+# ---- Wait for model warmup (first model only) ----
 echo -ne "  ├─ Waiting for model warmup"
 WARM_READY=0
 for i in $(seq 1 180); do
@@ -274,7 +274,8 @@ if [ -n "$PUBLIC_URL" ]; then
     echo -e "${GREEN}${BOLD}        🔥  RAGNAROK IS ONLINE  🔥         ${NC}"
     echo -e "${MAGENTA}${BOLD}  ${SEP}${NC}"
     echo -e "${CYAN}${BOLD}  Endpoint${DIM}  ${YELLOW}${PUBLIC_URL}/v1${NC}"
-    echo -e "${CYAN}${BOLD}  Model${DIM}     ${GREEN}${MODEL_NAME:-qwen3:8b}${NC}"
+    echo -e "${CYAN}${BOLD}  Models${DIM}    ${GREEN}${MODEL_NAME:-qwen3:8b}${NC}"
+    echo -e "${CYAN}${BOLD}  Default${DIM}   ${GREEN}${FIRST_MODEL:-qwen3:8b}${NC}"
     echo -e "${CYAN}${BOLD}  Port${DIM}      ${WHITE}${PORT:-8000}${NC}"
     echo -e "${MAGENTA}${BOLD}  ${SEP}${NC}"
     echo -e "${DIM}  curl ${YELLOW}${PUBLIC_URL}/v1/models${DIM}${NC}"

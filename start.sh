@@ -38,7 +38,18 @@ fi
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --model)          MODEL_NAME="$2"; shift 2 ;;
+        --model)
+            shift
+            MODEL_NAME=""
+            while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do
+                if [ -z "$MODEL_NAME" ]; then
+                    MODEL_NAME="$1"
+                else
+                    MODEL_NAME="$MODEL_NAME $1"
+                fi
+                shift
+            done
+            ;;
         --max-concurrent) MAX_CONCURRENT="$2"; shift 2 ;;
         --num-ctx)        NUM_CTX="$2"; shift 2 ;;
         --num-predict)    NUM_PREDICT="$2"; shift 2 ;;
@@ -51,34 +62,37 @@ while [[ $# -gt 0 ]]; do
         --verbose-log)    VERBOSE_LOG="$2"; shift 2 ;;
         --help)
             echo "Usage: bash start.sh [OPTIONS]"
+            echo "  --model <model1> [model2] [model3] ...   Model(s) to download and load"
             exit 0
             ;;
         *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
     esac
 done
 
-export MODEL_NAME MAX_CONCURRENT NUM_CTX NUM_PREDICT NUM_BATCH
+# Extract the first model as default
+FIRST_MODEL=$(echo "$MODEL_NAME" | awk '{print $1}')
+
+export MODEL_NAME FIRST_MODEL MAX_CONCURRENT NUM_CTX NUM_PREDICT NUM_BATCH
 export FLASH_ATTN NUM_GPU KEEP_ALIVE PORT DEBUG_MODE VERBOSE_LOG
 
 clear
 echo ""
 
 # ─── Rainbow ASCII Banner ───
-# Using \x60 for backticks to avoid bash command-substitution parsing errors
 echo -e "${RED} _  .-')     ('-.                     .-') _    ('-.     _  .-')               .-. .-')   ${NC}"
 echo -e "${RED} ( \( -O )   ( OO ).-.                ( OO ) )  ( OO ).-.( \( -O )              \  ( OO )   ${NC}"
 echo -e "${GREEN}  ,------.   / . --. /  ,----.    ,--./ ,--,'   / . --. / ,------.  .-'),-----. ,--. ,--.   ${NC}"
-echo -e "${GREEN}  |   /\x60. '  | \-.  \  '  .-./-') |   \ |  |\   | \-.  \  |   /\x60. '( OO'  .-.  '|  .'   /   ${NC}"
+echo -e "${GREEN}  |   \`. '  | \-.  \  '  .-./-') |   \ |  |\   | \-.  \  |   \`. '( OO'  .-.  '|  .'   /   ${NC}"
 echo -e "${YELLOW}  |  /  | |.-'-'  |  | |  |_( O- )|    \|  | ).-'-'  |  | |  /  | |/   |  | |  ||      /,  ${NC}"
 echo -e "${YELLOW}  |  |_.' | \| |_.'  | |  | .--, \|  .     |/  \| |_.'  | |  |_.' |\_) |  |\|  ||     ' _) ${NC}"
 echo -e "${BLUE}  |  .  '.'  |  .-.  |(|  | '. (_/|  |\    |    |  .-.  | |  .  '.'  \ |  | |  ||  .   \   ${NC}"
-echo -e "${BLUE}  |  |\  \   |  | |  | |  '--'  | |  | \   |    |  | |  | |  |\  \    \x60'  '-'  '|  |\   \  ${NC}"
-echo -e "${MAGENTA}  \x60--' '--'  \x60--' \x60--'  \x60------'  \x60--'  \x60--'    \x60--' \x60--' \x60--' '--'     \x60-----' \x60--' '--' ${NC}"
+echo -e "${BLUE}  |  |\  \   |  | |  | |  '--'  | |  | \   |    |  | |  | |  |\  \    \`'  '-'  '|  |\   \  ${NC}"
+echo -e "${MAGENTA}  \`--' '--'  \`--' \`--'  \`------'  \`--'  \`--'    \`--' \`--' \`--' '--'     \`-----' \`--' '--' ${NC}"
 echo ""
 echo -e "  ${CYAN}${BOLD}GPU Model Gateway${NC}"
 echo -e "  ${DIM}Run Ollama on Kaggle & Colab GPUs with a public OpenAI-compatible API${NC}"
 echo ""
-echo -e "  ${DIM}Model: ${GREEN}${MODEL_NAME}${DIM}    |    Port: ${YELLOW}${PORT}${NC}"
+echo -e "  ${DIM}Models: ${GREEN}${MODEL_NAME}${DIM}    |    Port: ${YELLOW}${PORT}${NC}"
 echo -e "  ${DIM}Context: ${GREEN}${NUM_CTX}${DIM}    |    GPU: ${YELLOW}${NUM_GPU}${DIM}    |    Flash: ${YELLOW}${FLASH_ATTN}${NC}"
 echo ""
 
@@ -87,7 +101,7 @@ echo -e "${BOLD}${WHITE}[1/4]${NC} ${DIM}Installing dependencies...${NC}"
 bash "$SCRIPT_DIR/scripts/setup.sh"
 
 # ─── Step 2 ───
-echo -e "${BOLD}${WHITE}[2/4]${NC} ${DIM}Preparing Ollama & model...${NC}"
+echo -e "${BOLD}${WHITE}[2/4]${NC} ${DIM}Preparing Ollama & model(s)...${NC}"
 bash "$SCRIPT_DIR/scripts/install_model.sh"
 
 # ─── Step 3 ───

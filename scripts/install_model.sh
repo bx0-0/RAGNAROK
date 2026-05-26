@@ -1,11 +1,12 @@
 #!/bin/bash
 #
-# Install / pull the selected Ollama model
+# Install / pull the selected Ollama model(s)
 #
 
 set -e
 
-MODEL="${MODEL_NAME:-qwen3:8b}"
+# MODEL_NAME can be space-separated list
+MODELS="$MODEL_NAME"
 
 echo "  ├─ Stopping any existing Ollama..."
 if pgrep ollama >/dev/null 2>&1; then
@@ -21,20 +22,25 @@ else
     echo "  │  ℹ️  Ollama already running"
 fi
 
-echo "  ├─ Pulling model: $MODEL"
-if ollama list | grep -q "^$MODEL "; then
-    echo "  │  ℹ️  Model already cached"
-else
-    ollama pull "$MODEL" > /tmp/ollama-pull.log 2>&1 &
-    PULL_PID=$!
-    printf "  │  Downloading "
-    while kill -0 $PULL_PID 2>/dev/null; do
-        printf "."
-        sleep 3
-    done
-    wait $PULL_PID
+# Pull each model in the list
+for MODEL in $MODELS; do
     echo ""
-    echo "  │  ✅ Model downloaded"
-fi
+    echo "  ├─ Pulling model: $MODEL"
+    if ollama list | grep -q "^$MODEL "; then
+        echo "  │  ℹ️  Model already cached"
+    else
+        ollama pull "$MODEL" > /tmp/ollama-pull.log 2>&1 &
+        PULL_PID=$!
+        printf "  │  Downloading "
+        while kill -0 $PULL_PID 2>/dev/null; do
+            printf "."
+            sleep 3
+        done
+        wait $PULL_PID
+        echo ""
+        echo "  │  ✅ Model downloaded"
+    fi
+done
 
+echo ""
 echo "  └─ Done."

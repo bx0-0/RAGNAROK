@@ -20,7 +20,8 @@ from src.utils import (
 )
 
 # ─── Config ───
-MODEL_NAME = os.environ.get("MODEL_NAME", "qwen3:8b")
+_MODEL_LIST = os.environ.get("MODEL_NAME", "qwen3:8b").split()
+MODEL_NAME = _MODEL_LIST[0]  # Default = first model
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", "1"))
 NUM_CTX = int(os.environ.get("NUM_CTX", "68768"))
 NUM_PREDICT = int(os.environ.get("NUM_PREDICT", "16384"))
@@ -33,10 +34,7 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
 REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")
-
-# ═══ Chunk Dumping for Debug ═══
-DUMP_CHUNKS = os.environ.get("DUMP_CHUNKS", "True").lower() in ("true", "1", "yes")
-CHUNK_DUMP_FILE = os.environ.get("CHUNK_DUMP_FILE", "/tmp/gateway-chunks-dump.jsonl")
+MAX_STREAM_SECONDS = int(os.environ.get("MAX_STREAM_SECONDS", "1800"))  # 30 دقيقة
 
 # Precompute ollama options (never changes at runtime)
 _OLLAMA_OPTS_BASE = {
@@ -78,32 +76,6 @@ _BAD_JSON_RESPONSE = Response(status_code=400, content=b'{"error":"Invalid JSON"
 # ─── Async-safe log queue (non-blocking) ───
 _log_queue = asyncio.Queue(maxsize=200)
 _request_log = collections.deque(maxlen=500)
-
-# ─── Chunk dump queue (non-blocking) ───
-_chunk_queue = asyncio.Queue(maxsize=2000)
-
-
-async def _chunk_writer():
-    with open(CHUNK_DUMP_FILE, "a") as f:
-        buf = []
-        try:
-            while True:
-                try:
-                    line = await asyncio.wait_for(_chunk_queue.get(), timeout=2.0)
-                    buf.append(line + "\n")
-                    if len(buf) >= 20:
-                        f.writelines(buf)
-                        f.flush()
-                        buf.clear()
-                except asyncio.TimeoutError:
-                    if buf:
-                        f.writelines(buf)
-                        f.flush()
-                        buf.clear()
-        except (asyncio.CancelledError, RuntimeError):
-            if buf:
-                f.writelines(buf)
-                f.flush()
 
 
 def _status_color(code):
@@ -207,13 +179,12 @@ def _fast_id():
 
 # ─── State ───
 class GatewayState:
-    __slots__ = ("http_client", "semaphore", "log_writer_task", "chunk_writer_task", "warmup_task", "is_warm")
+    __slots__ = ("http_client", "semaphore", "log_writer_task", "warmup_task", "is_warm")
 
     def __init__(self):
         self.http_client = None
         self.semaphore = asyncio.Semaphore(MAX_CONCURRENT)
         self.log_writer_task = None
-        self.chunk_writer_task = None
         self.warmup_task = None
         self.is_warm = False
 
@@ -242,7 +213,7 @@ async def _warmup(state: GatewayState):
                 if orjson.loads(line).get("done"):
                     break
         state.is_warm = True
-        logger.info("Model is warm and ready!")
+        logger.info(f"Model '{MODEL_NAME}' is warm and ready!")
     except Exception as e:
         logger.warning(f"Warm-up skipped: {e}")
         state.is_warm = True
@@ -260,7 +231,6 @@ async def lifespan(app: FastAPI):
         ),
     )
     state.log_writer_task = asyncio.create_task(_log_writer())
-    state.chunk_writer_task = asyncio.create_task(_chunk_writer())
     state.warmup_task = asyncio.create_task(_warmup(state))
 
     app.state.gw = state
@@ -270,7 +240,8 @@ async def lifespan(app: FastAPI):
         f"  \033[1m\033[0;31m🐉 RAGNAROK\033[0m\n"
         f"  \033[1m\033[0;36mGPU Model Gateway\033[0m\n"
         f"{'='*60}\n"
-        f"  \033[0;90mModel:\033[0m     {MODEL_NAME}\n"
+        f"  \033[0;90mModels:\033[0m    {_MODEL_LIST}\n"
+        f"  \033[0;90mDefault:\033[0m   {MODEL_NAME}\n"
         f"  \033[0;90mPort:\033[0m      {PORT}\n"
         f"  \033[0;90mConcurrent:\033[0m {MAX_CONCURRENT}\n"
         f"  \033[0;90mContext:\033[0m   {NUM_CTX}\n"
@@ -282,7 +253,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for task in (state.warmup_task, state.log_writer_task, state.chunk_writer_task):
+    for task in (state.warmup_task, state.log_writer_task):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -304,10 +275,10 @@ async def list_models():
     return {
         "object": "list",
         "data": [{
-            "id": MODEL_NAME,
+            "id": model,
             "object": "model",
             "owned_by": "local",
-        }],
+        } for model in _MODEL_LIST],
     }
 
 
@@ -316,7 +287,8 @@ async def health_check(request: Request):
     state = _get_state(request)
     return {
         "status": "ready" if state.is_warm else "warming",
-        "model": MODEL_NAME,
+        "models": _MODEL_LIST,
+        "default": MODEL_NAME,
     }
 
 
@@ -359,18 +331,37 @@ async def openai_completions(request: Request):
         await log_request(request_id, "POST", "/v1/chat/completions", 400, 0, 0, 0, "BAD_JSON")
         return _BAD_JSON_RESPONSE
 
+    # ═══ Log request info for debugging ═══
+    tools = body.get("tools")
+    msg_count = len(body.get("messages", []))
+    total_chars = sum(len(str(m.get("content", ""))) for m in body.get("messages", []))
+    client_name = request.headers.get("user-agent", "unknown")[:40]
+    tool_names = [t.get("function", {}).get("name") for t in tools if isinstance(t, dict)] if tools else []
+    logger.info(
+        f"[{request_id}] Client={client_name} | Msgs={msg_count} | "
+        f"Chars={total_chars} | Tools={tool_names}"
+    )
+    # ═══ End log ═══
+
     is_streaming = body.get("stream", False)
-    ollama_messages = convert_messages_to_ollama(body.get("messages", []))
+
+    # ── Resolve model: use client's model param if valid, else default ──
+    requested_model = body.get("model", "")
+    if requested_model and requested_model in _MODEL_LIST:
+        active_model = requested_model
+    else:
+        active_model = MODEL_NAME
+
+    ollama_messages = convert_messages_to_ollama(body.get("messages", []), has_tools=bool(tools))
 
     # Build ollama payload with orjson
     ollama_payload_dict = {
-        "model": MODEL_NAME,
+        "model": active_model,
         "messages": ollama_messages,
         "stream": True,
         "keep_alive": KEEP_ALIVE,
         "options": _OLLAMA_OPTS,
     }
-    tools = body.get("tools")
     if tools:
         ollama_payload_dict["tools"] = tools
     tool_choice = body.get("tool_choice")
@@ -380,14 +371,14 @@ async def openai_completions(request: Request):
     created = int(time.time())
     if not is_streaming:
         try:
-            return await _handle_non_stream(state, request_id, ollama_payload_dict, start_time, created)
+            return await _handle_non_stream(state, request_id, ollama_payload_dict, start_time, created, active_model)
         finally:
             state.semaphore.release()
     else:
-        return _handle_stream(state, request_id, ollama_payload_dict, start_time)
+        return _handle_stream(state, request_id, ollama_payload_dict, start_time, active_model)
 
 
-async def _handle_non_stream(state, request_id, ollama_payload, start_time, created):
+async def _handle_non_stream(state, request_id, ollama_payload, start_time, created, active_model):
     content_parts = []
     thinking_parts = []
     all_tool_calls = []
@@ -445,7 +436,7 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
         "id": f"chatcmpl-{request_id}",
         "object": "chat.completion",
         "created": created,
-        "model": MODEL_NAME,
+        "model": active_model,
         "choices": [{
             "index": 0,
             "message": resp_message,
@@ -460,16 +451,16 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
 
 
 
-def _handle_stream(state, request_id, ollama_payload, start_time):
+def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
     request_id_str = f"chatcmpl-{request_id}"
     created = int(time.time())
 
-    # Pre-compute static SSE envelope (prefix/suffix around delta — skips re-serializing id/object/created/model/index/finish_reason every chunk)
+    # Pre-compute static SSE envelope
     _tpl = orjson.dumps({
         "id": request_id_str,
         "object": "chat.completion.chunk",
         "created": created,
-        "model": MODEL_NAME,
+        "model": active_model,
         "choices": [{"delta": "__DELTA__", "index": 0, "finish_reason": None}],
     })
     _marker = b'"__DELTA__"'
@@ -482,6 +473,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
         has_tool_calls = False
         tool_call_index = 0
         prompt_tokens = completion_tokens = 0
+        released = False
 
         try:
             async with state.http_client.stream(
@@ -495,8 +487,6 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     yield _SSE_DONE
                     return
 
-                # Background reader feeds lines into a queue so we can wait_with_timeout
-                # without ever cancelling the httpx socket read.
                 line_q = asyncio.Queue(maxsize=256)
                 reader_error = [None]
 
@@ -507,13 +497,27 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     except Exception as e:
                         reader_error[0] = e
                     finally:
-                        await line_q.put(None)  # sentinel
+                        await line_q.put(None)
 
                 reader = asyncio.create_task(_reader())
                 keepalive_count = 0
                 graceful = False
                 try:
                     while True:
+                        # ═══ Hard Timeout ═══
+                        stream_elapsed = time.monotonic() - start_time
+                        if stream_elapsed > MAX_STREAM_SECONDS:
+                            logger.warning(f"[{request_id}] Hard timeout after {int(stream_elapsed)}s")
+                            yield b"data: " + orjson.dumps({
+                                "error": {
+                                    "message": f"Generation exceeded {MAX_STREAM_SECONDS}s limit",
+                                    "type": "timeout",
+                                }
+                            }) + b"\n\n"
+                            yield _SSE_DONE
+                            return
+                        # ═══ End Hard Timeout ═══
+
                         try:
                             raw = await asyncio.wait_for(line_q.get(), timeout=10.0)
                         except asyncio.TimeoutError:
@@ -537,20 +541,6 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         except Exception as e:
                             logger.error(f"[{request_id}] Parse fail: {e} | line={raw[:100]}")
                             continue
-
-                        # ═══ DUMP RAW CHUNK TO FILE ═══
-                        if DUMP_CHUNKS:
-                            try:
-                                dump_obj = {
-                                    "ts": time.time(),
-                                    "req_id": request_id,
-                                    "stream_elapsed_ms": round((time.monotonic() - start_time) * 1000),
-                                    "ollama_data": data
-                                }
-                                await _chunk_queue.put(orjson.dumps(dump_obj).decode())
-                            except Exception:
-                                pass
-                        # ═══ END DUMP ═══
 
                         if data.get("error"):
                             logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
@@ -627,7 +617,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                                 "id": request_id_str,
                                 "object": "chat.completion.chunk",
                                 "created": created,
-                                "model": MODEL_NAME,
+                                "model": active_model,
                                 "choices": [{
                                     "delta": {},
                                     "index": 0,
@@ -649,13 +639,12 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                     logger.error(f"[{request_id}] Reader error: {reader_error[0]}")
                     yield b"data: " + orjson.dumps({"error": {"message": str(reader_error[0]), "type": "upstream_error"}}) + b"\n\n"
 
-                # Fallback: Ollama closed without done:true — send truncated finish
                 if not graceful and not reader_error[0]:
                     yield b"data: " + orjson.dumps({
                         "id": request_id_str,
                         "object": "chat.completion.chunk",
                         "created": created,
-                        "model": MODEL_NAME,
+                        "model": active_model,
                         "choices": [{
                             "delta": {},
                             "index": 0,
@@ -668,9 +657,11 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
                         },
                     }) + b"\n\n"
 
-                # Happy path done
                 yield _SSE_DONE
 
+        except asyncio.CancelledError:
+            # الكلاينت قفل الاتصال فجأة
+            logger.warning(f"[{request_id}] Stream cancelled (client disconnected)")
         except httpx.RemoteProtocolError:
             logger.error(f"[{request_id}] Ollama connection reset")
             yield b"data: " + orjson.dumps({"error": {"message": "Upstream connection reset", "type": "upstream_error"}}) + b"\n\n"
@@ -688,10 +679,18 @@ def _handle_stream(state, request_id, ollama_payload, start_time):
             yield b"data: " + orjson.dumps({"error": {"message": "Internal server error", "type": "server_error"}}) + b"\n\n"
             yield _SSE_DONE
         finally:
-            elapsed = round(time.monotonic() - start_time, 2)
-            await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
-            logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
-            state.semaphore.release()
+            if not released:
+                released = True
+                # ═══ الأهم: حرر السيمافور الأول! (Synchronous مش بيحتاج await) ═══
+                state.semaphore.release()
+                
+                # وبعدين سجل اللوج جوه try عشان لو الـ Task اتعملها Cancel متهنجش
+                elapsed = round(time.monotonic() - start_time, 2)
+                try:
+                    await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
+                    logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
+                except asyncio.CancelledError:
+                    pass
 
     return StreamingResponse(
         stream_generator(),
@@ -720,5 +719,5 @@ def run_server():
 
 if __name__ == "__main__":
     setup_logging(os.environ.get("DEBUG_MODE", "False").lower() in ("true", "1"))
-    logger.info(f"Starting server on :{PORT} model={MODEL_NAME}")
+    logger.info(f"Starting server on :{PORT} default_model={MODEL_NAME} models={_MODEL_LIST}")
     run_server()
