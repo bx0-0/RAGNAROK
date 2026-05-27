@@ -303,21 +303,26 @@ async def health_check(request: Request):
 @app.post("/v1/embeddings")
 async def openai_embeddings(request: Request):
     state = _get_state(request)
+    request_id = _fast_id()
+    start_time = time.monotonic()
+    await log_request_start(request_id, "POST", "/v1/embeddings")
+
     try:
         body = orjson.loads(await request.body())
     except Exception:
+        await log_request(request_id, "POST", "/v1/embeddings", 400, 0, 0, 0, "BAD_JSON")
         return Response(status_code=400, content=b'{"error":"Invalid JSON"}', media_type="application/json")
 
     model = body.get("model", MODEL_NAME)
     input_data = body.get("input")
     if not input_data:
+        await log_request(request_id, "POST", "/v1/embeddings", 400, 0, 0, 0, "MISSING_INPUT")
         return Response(
             status_code=400,
             content=orjson.dumps({"error": {"message": "'input' is required", "type": "invalid_request_error"}}),
             media_type="application/json",
         )
 
-    # Normalize input to list
     if isinstance(input_data, str):
         input_data = [input_data]
 
@@ -325,8 +330,12 @@ async def openai_embeddings(request: Request):
 
     try:
         resp = await state.http_client.post(f"{OLLAMA_BASE_URL}/api/embed", json=payload)
+        elapsed = round(time.monotonic() - start_time, 2)
+        await log_request(request_id, "POST", "/v1/embeddings", resp.status_code, elapsed, 0, 0, "EMBED")
         return Response(status_code=resp.status_code, content=resp.content, media_type="application/json")
     except Exception as e:
+        elapsed = round(time.monotonic() - start_time, 2)
+        await log_request(request_id, "POST", "/v1/embeddings", 502, elapsed, 0, 0, f"ERR:{str(e)[:40]}")
         return Response(
             status_code=502,
             content=orjson.dumps({"error": {"message": str(e), "type": "upstream_error"}}),
@@ -408,12 +417,19 @@ async def openai_completions(request: Request):
     ollama_messages = convert_messages_to_ollama(body.get("messages", []), has_tools=bool(tools))
 
     # Build ollama payload with orjson
+    # Dynamic options: enable thinking if requested
+    opts = dict(_OLLAMA_OPTS)
+    if body.get("thinking", False):
+        opts["thinking"] = {"enabled": True}
+    else:
+        opts["thinking"] = {"enabled": False}
+
     ollama_payload_dict = {
         "model": active_model,
         "messages": ollama_messages,
         "stream": True,
         "keep_alive": KEEP_ALIVE,
-        "options": _OLLAMA_OPTS,
+        "options": opts,
     }
     if tools:
         ollama_payload_dict["tools"] = tools
@@ -455,7 +471,6 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
             if response.status_code != 200:
                 err = await response.aread()
                 elapsed = round(time.monotonic() - start_time, 2)
-                # Log the actual upstream error from Ollama
                 logger.error(f"[{request_id}] Ollama Upstream Error: {err.decode()[:300]}")
                 await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
                 return Response(status_code=response.status_code, content=err, media_type="application/json")
@@ -480,6 +495,10 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
                     prompt_tokens = data.get("prompt_eval_count", 0)
                     completion_tokens = data.get("eval_count", 0)
                     break
+    except asyncio.CancelledError:
+        elapsed = round(time.monotonic() - start_time, 2)
+        await log_request(request_id, "POST", "/v1/chat/completions", 499, elapsed, 0, 0, "CLIENT_CANCELLED")
+        raise
     except Exception as e:
         elapsed = round(time.monotonic() - start_time, 2)
         await log_request(request_id, "POST", "/v1/chat/completions", 500, elapsed, 0, 0, f"ERR:{str(e)[:40]}")
@@ -648,7 +667,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                                     formatted = []
                                     for tc in tool_calls:
                                         tc_name = tc.get("function", {}).get("name") or "?"
-                                        # ═══ لوج اسم التول بشكل واضح ═══
+                                        # Log tool name clearly
                                         logger.info(f"[{request_id}] 🔧 Tool Call: {tc_name}")
                                         tc_args = tc.get("function", {}).get("arguments", "")
                                         if isinstance(tc_args, str):
