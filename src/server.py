@@ -440,8 +440,10 @@ async def openai_completions(request: Request):
     created = int(time.time())
     if not is_streaming:
         try:
-            result = await _handle_non_stream(state, request_id, ollama_payload_dict, start_time, created, active_model)
+            result = await _handle_non_stream(state, request_id, ollama_payload_dict, start_time, created, active_model, request)
             return result
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"[{request_id}] Non-stream handler crashed: {e}")
             elapsed = round(time.monotonic() - start_time, 2)
@@ -457,7 +459,7 @@ async def openai_completions(request: Request):
         return _handle_stream(state, request_id, ollama_payload_dict, start_time, active_model)
 
 
-async def _handle_non_stream(state, request_id, ollama_payload, start_time, created, active_model):
+async def _handle_non_stream(state, request_id, ollama_payload, start_time, created, active_model, request):
     content_parts = []
     thinking_parts = []
     all_tool_calls = []
@@ -478,6 +480,12 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
             async for line in response.aiter_lines():
                 if not line.strip():
                     continue
+
+                # Abort immediately if client disconnected
+                if await request.is_disconnected():
+                    await response.aclose()
+                    raise asyncio.CancelledError
+
                 data = orjson.loads(line)
                 msg = data.get("message", {})
 
@@ -497,7 +505,7 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
                     break
     except asyncio.CancelledError:
         elapsed = round(time.monotonic() - start_time, 2)
-        await log_request(request_id, "POST", "/v1/chat/completions", 499, elapsed, 0, 0, "CLIENT_CANCELLED")
+        await log_request(request_id, "POST", "/v1/chat/completions", 499, elapsed, 0, 0, "CLIENT_DISCONNECTED")
         raise
     except Exception as e:
         elapsed = round(time.monotonic() - start_time, 2)
