@@ -16,8 +16,21 @@ apt-get update -qq > /dev/null 2>&1 && apt-get install -y -qq zstd > /dev/null 2
 
 echo "  ├─ Installing Ollama..."
 if ! command -v ollama &> /dev/null; then
-    curl -fsSL https://ollama.com/install.sh | sh > /dev/null 2>&1
-    echo "  │  ✅ Ollama installed"
+    max_retries=3
+    for attempt in $(seq 1 $max_retries); do
+        echo "  │  Attempt ${attempt}/${max_retries}..."
+        if curl -fsSL --http1.1 https://ollama.com/install.sh | sh > /dev/null 2>&1; then
+            echo "  │  ✅ Ollama installed successfully"
+            break
+        fi
+        if [ "$attempt" -eq "$max_retries" ]; then
+            echo "  └─ ❌ Failed to install Ollama after ${max_retries} attempts. Please install it manually:"
+            echo "     curl -fsSL --http1.1 https://ollama.com/install.sh | sh"
+            exit 1
+        fi
+        echo "  │  ⚠️  Retry in 3s..."
+        sleep 3
+    done
 else
     echo "  │  ℹ️  Ollama already installed"
 fi
