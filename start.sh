@@ -81,10 +81,11 @@ DISPLAY_MODELS=""
 for M in $MODEL_NAME; do
     if [[ "$M" == hf.co/* ]]; then
         SHORT=$(echo "$M" | sed 's|hf\.co/[^/]*/||')
-        DISPLAY_MODELS="$DISPLAY_MODELS $SHORT"
+        DISPLAY_MODELS="$DISPLAY_MODELS$SHORT"
     else
-        DISPLAY_MODELS="$DISPLAY_MODELS $M"
+        DISPLAY_MODELS="$DISPLAY_MODELS$M"
     fi
+    DISPLAY_MODELS="$DISPLAY_MODELS "
 done
 
 export MODEL_NAME FIRST_MODEL MAX_CONCURRENT NUM_CTX NUM_PREDICT NUM_BATCH
