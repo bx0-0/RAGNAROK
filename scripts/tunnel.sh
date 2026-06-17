@@ -274,7 +274,7 @@ if [ -n "$PUBLIC_URL" ]; then
     DISPLAY_MODEL_NAMES=""
     for M in ${MODEL_NAME:-qwen3:8b}; do
         if [[ "$M" == hf.co/* ]]; then
-            SHORT=$(echo "$M" | sed 's|hf\\.co/[^/]*/||')
+            SHORT=$(echo "$M" | sed 's|hf\.co/[^/]*/||')
             DISPLAY_MODEL_NAMES="$DISPLAY_MODEL_NAMES $SHORT"
         else
             DISPLAY_MODEL_NAMES="$DISPLAY_MODEL_NAMES $M"
