@@ -42,20 +42,6 @@ for MODEL in $MODELS; do
         echo ""
         echo "  │  ✅ Model downloaded"
     fi
-
-    # Create short alias for HF models so the API uses clean names
-    if [[ "$MODEL" == hf.co/* ]]; then
-        SHORT_NAME=$(echo "$MODEL" | sed 's|hf\.co/[^/]*/||')
-        SHORT_EXISTS=$(ollama list 2>/dev/null | awk '{print $1}' | grep -Fx "$SHORT_NAME" || true)
-        if [ -z "$SHORT_EXISTS" ]; then
-            echo "  ├─ Creating short alias: $SHORT_NAME"
-            ollama cp "$MODEL" "$SHORT_NAME" > /dev/null 2>&1 && \
-                echo "  │  ✅ Alias created (no extra disk space used)" || \
-                echo "  │  ⚠️  Alias creation failed, will use full name"
-        else
-            echo "  │  ℹ️  Short alias already exists: $SHORT_NAME"
-        fi
-    fi
 done
 
 echo ""
