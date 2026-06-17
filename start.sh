@@ -72,30 +72,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Extract the first model as default (before conversion)
-RAW_FIRST_MODEL=$(echo "$MODEL_NAME" | awk '{print $1}')
-
-# ─── Step 1 ───
-echo -e "${BOLD}${WHITE}[1/4]${NC} ${DIM}Installing dependencies...${NC}"
-bash "$SCRIPT_DIR/scripts/setup.sh"
-
-# ─── Step 2 ───
-echo -e "${BOLD}${WHITE}[2/4]${NC} ${DIM}Preparing Ollama & model(s)...${NC}"
-bash "$SCRIPT_DIR/scripts/install_model.sh"
-
-# Convert HF names to short aliases for the server
-# e.g. hf.co/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q5_K_M → Qwen3.6-35B-A3B-GGUF:UD-Q5_K_M
-SHORTENED_MODELS=""
-for M in $MODEL_NAME; do
-    if [[ "$M" == hf.co/* ]]; then
-        SHORT=$M
-        SHORT=$(echo "$SHORT" | sed 's|hf\.co/[^/]*/||')
-        SHORTENED_MODELS="$SHORTENED_MODELS $SHORT"
-    else
-        SHORTENED_MODELS="$SHORTENED_MODELS $M"
-    fi
-done
-MODEL_NAME=$(echo $SHORTENED_MODELS)
+# Extract the first model as default
 FIRST_MODEL=$(echo "$MODEL_NAME" | awk '{print $1}')
 
 export MODEL_NAME FIRST_MODEL MAX_CONCURRENT NUM_CTX NUM_PREDICT NUM_BATCH
@@ -121,6 +98,14 @@ echo ""
 echo -e "  ${DIM}Models: ${GREEN}${MODEL_NAME}${DIM}    |    Port: ${YELLOW}${PORT}${NC}"
 echo -e "  ${DIM}Context: ${GREEN}${NUM_CTX}${DIM}    |    GPU: ${YELLOW}${NUM_GPU}${DIM}    |    Flash: ${YELLOW}${FLASH_ATTN}${NC}"
 echo ""
+
+# ─── Step 1 ───
+echo -e "${BOLD}${WHITE}[1/4]${NC} ${DIM}Installing dependencies...${NC}"
+bash "$SCRIPT_DIR/scripts/setup.sh"
+
+# ─── Step 2 ───
+echo -e "${BOLD}${WHITE}[2/4]${NC} ${DIM}Preparing Ollama & model(s)...${NC}"
+bash "$SCRIPT_DIR/scripts/install_model.sh"
 
 # ─── Step 3 ───
 echo -e "${BOLD}${WHITE}[3/4]${NC} ${DIM}Starting FastAPI server...${NC}"

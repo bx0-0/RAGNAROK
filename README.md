@@ -46,12 +46,9 @@ bash start.sh --model qwen3:8b --max-concurrent 2
 
 ### Use any GGUF model from Hugging Face directly
 
-You can pull and run GGUF models straight from the Hugging Face Hub. The gateway automatically creates a short alias so you don't deal with long `hf.co/` names:
+You can pull and run GGUF models straight from the Hugging Face Hub:
 
 ```bash
-# Full HF name → becomes Qwen3.6-35B-A3B-GGUF:UD-Q5_K_M in the API
-bash start.sh --model hf.co/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q5_K_M
-
 # Default quantization (Q4_K_M if available)
 bash start.sh --model hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF
 
