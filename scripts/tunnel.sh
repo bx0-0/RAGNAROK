@@ -291,7 +291,14 @@ if [ -n "$PUBLIC_URL" ]; then
     echo -e "${CYAN}${BOLD}  Port${DIM}      ${WHITE}${PORT:-8000}${NC}"
 
     # Hint if any HF model was used
-    if [[ "$MODEL_NAME" == hf.co/* ]]; then
+    HF_MODEL_FOUND=0
+    for M in $MODEL_NAME; do
+        if [[ "$M" == hf.co/* ]]; then
+            HF_MODEL_FOUND=1
+            break
+        fi
+    done
+    if [ "$HF_MODEL_FOUND" -eq 1 ]; then
         echo ""
         echo -e "  ${YELLOW}ℹ️  HF models use short aliases. Use the 'Models' name above, not hf.co/...${NC}"
     fi
