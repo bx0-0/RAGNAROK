@@ -62,7 +62,10 @@ while [[ $# -gt 0 ]]; do
         --verbose-log)    VERBOSE_LOG="$2"; shift 2 ;;
         --help)
             echo "Usage: bash start.sh [OPTIONS]"
-            echo "  --model <model1> [model2] [model3] ...   Model(s) to download and load"
+            echo "  --model <model1> [model2] ...   Model(s) to load"
+            echo "                                  Regular: qwen3:8b, llama3.3:70b"
+            echo "                                  HuggingFace GGUF: hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF"
+            echo "                                              hf.co/user/repo:Q8_0"
             exit 0
             ;;
         *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;

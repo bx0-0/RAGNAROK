@@ -44,6 +44,23 @@ bash start.sh
 bash start.sh --model qwen3:8b --max-concurrent 2
 ```
 
+### Use any GGUF model from Hugging Face directly
+
+You can pull and run GGUF models straight from the Hugging Face Hub:
+
+```bash
+# Default quantization (Q4_K_M if available)
+bash start.sh --model hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF
+
+# Specify quantization tag
+bash start.sh --model hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:Q8_0
+```
+
+Or in `config/settings.env`:
+```env
+MODEL_NAME=hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:Q8_0
+```
+
 That's it. You'll get a public URL like:
 ```
 🌐  https://abcd1234.trycloudflare.com/v1
@@ -124,6 +141,8 @@ bash start.sh --model llama3.3:70b --max-concurrent 2 --num-ctx 32768
 
 ## 🤖 Supported Models (Kaggle T4 friendly)
 
+### Ollama Library
+
 | Model | Size | Quality | Load Time |
 |-------|------|---------|-----------|
 | `qwen3:8b` | 8B | ⭐⭐⭐ | ~3 min |
@@ -131,6 +150,18 @@ bash start.sh --model llama3.3:70b --max-concurrent 2 --num-ctx 32768
 | `llama3.3:70b` | 70B | ⭐⭐⭐⭐ | ~15 min |
 | `mistral:7b` | 7B | ⭐⭐ | ~3 min |
 | `deepseek-r1:7b` | 7B | ⭐⭐⭐ | ~3 min |
+
+### Hugging Face GGUF — you can use any GGUF model directly from HF
+
+You can use any GGUF model directly from the Hugging Face Hub. Specify quantization with a tag (`:Q8_0`, `:Q4_K_M`, etc.) — defaults to `Q4_K_M`:
+
+| Model | Command |
+|-------|---------|
+| Llama 3.2 1B | `hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF` |
+| Llama 3.2 1B (Q8) | `hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:Q8_0` |
+| Qwen2.5 7B (Q4) | `hf.co/bartowski/Qwen2.5-7B-Instruct-GGUF:Q4_K_M` |
+
+Browse [bartowski GGUF repos](https://huggingface.co/bartowski) for heavily optimized quantized models.
 
 ---
 
