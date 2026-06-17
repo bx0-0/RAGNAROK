@@ -122,14 +122,6 @@ echo -e "  ${DIM}Models: ${GREEN}${MODEL_NAME}${DIM}    |    Port: ${YELLOW}${PO
 echo -e "  ${DIM}Context: ${GREEN}${NUM_CTX}${DIM}    |    GPU: ${YELLOW}${NUM_GPU}${DIM}    |    Flash: ${YELLOW}${FLASH_ATTN}${NC}"
 echo ""
 
-# ─── Step 1 ───
-echo -e "${BOLD}${WHITE}[1/4]${NC} ${DIM}Installing dependencies...${NC}"
-bash "$SCRIPT_DIR/scripts/setup.sh"
-
-# ─── Step 2 ───
-echo -e "${BOLD}${WHITE}[2/4]${NC} ${DIM}Preparing Ollama & model(s)...${NC}"
-bash "$SCRIPT_DIR/scripts/install_model.sh"
-
 # ─── Step 3 ───
 echo -e "${BOLD}${WHITE}[3/4]${NC} ${DIM}Starting FastAPI server...${NC}"
 cd "$SCRIPT_DIR"
