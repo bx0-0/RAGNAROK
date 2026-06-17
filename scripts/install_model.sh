@@ -42,6 +42,22 @@ for MODEL in $MODELS; do
         echo ""
         echo "  │  ✅ Model downloaded"
     fi
+
+    # Create a short alias for Hugging Face models so clients use clean names
+    if [[ "$MODEL" == hf.co/* ]]; then
+        SHORT_NAME=$(echo "$MODEL" | sed 's|hf\.co/[^/]*/||')
+        ALIAS_EXISTS=$(ollama list 2>/dev/null | awk '{print $1}' | grep -Fx "$SHORT_NAME" || true)
+        if [ -z "$ALIAS_EXISTS" ]; then
+            echo "  ├─ Creating alias: $SHORT_NAME"
+            if ollama cp "$MODEL" "$SHORT_NAME" > /dev/null 2>&1; then
+                echo "  │  ✅ Alias created (shares data, no extra disk space)"
+            else
+                echo "  │  ⚠️  Alias creation failed — will use full name"
+            fi
+        else
+            echo "  │  ℹ️  Alias already exists: $SHORT_NAME"
+        fi
+    fi
 done
 
 echo ""
