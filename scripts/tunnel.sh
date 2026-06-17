@@ -269,14 +269,32 @@ if [ -n "$PUBLIC_URL" ]; then
 
     # ── Banner ──
     SEP=$(printf '=%.0s' $(seq 1 56))
+
+    # Convert HF names to display-friendly short aliases
+    DISPLAY_MODEL_NAMES=""
+    for M in ${MODEL_NAME:-qwen3:8b}; do
+        if [[ "$M" == hf.co/* ]]; then
+            SHORT=$(echo "$M" | sed 's|hf\\.co/[^/]*/||')
+            DISPLAY_MODEL_NAMES="$DISPLAY_MODEL_NAMES $SHORT"
+        else
+            DISPLAY_MODEL_NAMES="$DISPLAY_MODEL_NAMES $M"
+        fi
+    done
     echo ""
     echo -e "${MAGENTA}${BOLD}  ${SEP}${NC}"
     echo -e "${GREEN}${BOLD}        🔥  RAGNAROK IS ONLINE  🔥         ${NC}"
     echo -e "${MAGENTA}${BOLD}  ${SEP}${NC}"
     echo -e "${CYAN}${BOLD}  Endpoint${DIM}  ${YELLOW}${PUBLIC_URL}/v1${NC}"
-    echo -e "${CYAN}${BOLD}  Models${DIM}    ${GREEN}${MODEL_NAME:-qwen3:8b}${NC}"
-    echo -e "${CYAN}${BOLD}  Default${DIM}   ${GREEN}${FIRST_MODEL:-qwen3:8b}${NC}"
+    echo -e "${CYAN}${BOLD}  Models${DIM}    ${GREEN}${DISPLAY_MODEL_NAMES}${NC}"
+    FIRST_SHORT=$(echo "$DISPLAY_MODEL_NAMES" | awk '{print $1}')
+    echo -e "${CYAN}${BOLD}  Default${DIM}   ${GREEN}${FIRST_SHORT:-qwen3:8b}${NC}"
     echo -e "${CYAN}${BOLD}  Port${DIM}      ${WHITE}${PORT:-8000}${NC}"
+
+    # Hint if any HF model was used
+    if [[ "$MODEL_NAME" == hf.co/* ]]; then
+        echo ""
+        echo -e "  ${YELLOW}ℹ️  HF models use short aliases. Use the 'Models' name above, not hf.co/...${NC}"
+    fi
     echo -e "${MAGENTA}${BOLD}  ${SEP}${NC}"
     echo -e "${DIM}  curl ${YELLOW}${PUBLIC_URL}/v1/models${DIM}${NC}"
     echo -e "${MAGENTA}${BOLD}  ${SEP}${NC}"

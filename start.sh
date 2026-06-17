@@ -75,6 +75,18 @@ done
 # Extract the first model as default
 FIRST_MODEL=$(echo "$MODEL_NAME" | awk '{print $1}')
 
+# Convert HF names to display-friendly aliases for banner + logs
+# hf.co/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q5_K_M → Qwen3.6-35B-A3B-GGUF:UD-Q5_K_M
+DISPLAY_MODELS=""
+for M in $MODEL_NAME; do
+    if [[ "$M" == hf.co/* ]]; then
+        SHORT=$(echo "$M" | sed 's|hf\.co/[^/]*/||')
+        DISPLAY_MODELS="$DISPLAY_MODELS $SHORT"
+    else
+        DISPLAY_MODELS="$DISPLAY_MODELS $M"
+    fi
+done
+
 export MODEL_NAME FIRST_MODEL MAX_CONCURRENT NUM_CTX NUM_PREDICT NUM_BATCH
 export FLASH_ATTN NUM_GPU KEEP_ALIVE PORT DEBUG_MODE VERBOSE_LOG
 
@@ -95,7 +107,7 @@ echo ""
 echo -e "  ${CYAN}${BOLD}GPU Model Gateway${NC}"
 echo -e "  ${DIM}Run Ollama on Kaggle & Colab GPUs with a public OpenAI-compatible API${NC}"
 echo ""
-echo -e "  ${DIM}Models: ${GREEN}${MODEL_NAME}${DIM}    |    Port: ${YELLOW}${PORT}${NC}"
+echo -e "  ${DIM}Models: ${GREEN}${DISPLAY_MODELS}${DIM}    |    Port: ${YELLOW}${PORT}${NC}"
 echo -e "  ${DIM}Context: ${GREEN}${NUM_CTX}${DIM}    |    GPU: ${YELLOW}${NUM_GPU}${DIM}    |    Flash: ${YELLOW}${FLASH_ATTN}${NC}"
 echo ""
 
