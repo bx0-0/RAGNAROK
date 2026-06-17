@@ -26,7 +26,9 @@ fi
 for MODEL in $MODELS; do
     echo ""
     echo "  ├─ Pulling model: $MODEL"
-    if ollama list | grep -q "^$MODEL "; then
+    # Check if model exists — works for both regular and HF names (hf.co/...)
+    MODEL_EXISTS=$(ollama list 2>/dev/null | awk '{print $1}' | grep -Fx "$MODEL" || true)
+    if [ -n "$MODEL_EXISTS" ]; then
         echo "  │  ℹ️  Model already cached"
     else
         ollama pull "$MODEL" > /tmp/ollama-pull.log 2>&1 &
