@@ -20,10 +20,10 @@ from src.utils import (
 )
 
 # ─── Config ───
-_MODEL_LIST = os.environ.get("MODEL_NAME", "qwen3:8b").split()
-# Also register short aliases for HF models (created by ollama cp in install_model.sh)
-_SHORT_ALIASES = [name.split("/", 3)[-1] for name in _MODEL_LIST if name.startswith("hf.co/")]
-_MODEL_LIST.extend(_SHORT_ALIASES)
+_RAW_MODEL_LIST = os.environ.get("MODEL_NAME", "qwen3:8b").split()
+# Replace full HF names with short aliases (created by ollama cp in install_model.sh)
+_SHORT_ALIASES = {name: name.split("/", 3)[-1] for name in _RAW_MODEL_LIST if name.startswith("hf.co/")}
+_MODEL_LIST = [_SHORT_ALIASES.get(m, m) for m in _RAW_MODEL_LIST]
 MODEL_NAME = _MODEL_LIST[0]  # Default = first model
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", "1"))
 NUM_CTX = int(os.environ.get("NUM_CTX", "68768"))
