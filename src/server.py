@@ -47,8 +47,7 @@ HTTP_POOL_TIMEOUT = float(os.environ.get("HTTP_POOL_TIMEOUT", "900.0"))
 MAX_CONNECTIONS = int(os.environ.get("MAX_CONNECTIONS", "2000"))
 MAX_KEEPALIVE_CONNECTIONS = int(os.environ.get("MAX_KEEPALIVE_CONNECTIONS", "500"))
 KEEPALIVE_EXPIRY = int(os.environ.get("KEEPALIVE_EXPIRY", "300"))
-MAX_QUEUE_SIZE = int(os.environ.get("MAX_QUEUE_SIZE", "512"))
-KEEPALIVE_INTERVAL = float(os.environ.get("KEEPALIVE_INTERVAL", "30.0"))  # Cloudflare ~100s timeout
+MAX_QUEUE_SIZE = int(os.environ.get("MAX_QUEUE_SIZE", "256"))
 MAX_KEEPALIVE_PINGS = int(os.environ.get("MAX_KEEPALIVE_PINGS", "120"))
 
 # Precompute ollama options (never changes at runtime)
@@ -617,29 +616,14 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                     yield _SSE_DONE
                     return
 
-                line_q = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
-                reader_error = [None]
-
-                async def _reader():
-                    try:
-                        async for raw in response.aiter_lines():
-                            await line_q.put(raw)
-                    except Exception as e:
-                        reader_error[0] = e
-                    finally:
-                        await line_q.put(None)
-
-                reader = asyncio.create_task(_reader())
+                line_iter = response.aiter_lines().__aiter__()
                 keepalive_count = 0
                 graceful = False
+                KEEPALIVE_S = 30.0  # Cloudflare ~100s origin timeout
 
-                # Cloudflare origin timeout ~100s (Error 524).
-                # Fire a ping every 30s so t=30,60,90 all land well under 100.
-                KEEPALIVE_S = 30.0
-
-                # ── Token batching: accumulate small chunks before yielding ──
-                # Amortizes orjson + network overhead per-frame.
-                BATCH_FLUSH_MS = 200        # flush buffer every 200ms max
+                # ── Token batching ──
+                # Accumulate small content/thinking tokens; flush every 100ms.
+                # Amortizes orjson + network overhead across ~10-20 tokens.
                 batch_content: list[str] = []
                 batch_thinking: list[str] = []
                 batch_timer = time.monotonic()
@@ -658,15 +642,14 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                         delta["content"] = "".join(batch_content)
                     batch_content.clear()
                     batch_thinking.clear()
+                    batch_timer = time.monotonic()
                     return _sfx + orjson.dumps(delta) + _efx
-
                 try:
                     while True:
                         # ═══ Hard Timeout ═══
                         stream_elapsed = time.monotonic() - start_time
                         if stream_elapsed > MAX_STREAM_SECONDS:
                             logger.warning(f"[{request_id}] Hard timeout after {int(stream_elapsed)}s")
-                            yield _flush_batch() or b""
                             yield b"data: " + orjson.dumps({
                                 "error": {
                                     "message": f"Generation exceeded {MAX_STREAM_SECONDS}s limit",
@@ -677,24 +660,24 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                             return
                         # ═══ End Hard Timeout ═══
 
+                        # Race between: new Ollama data vs keepalive timer
                         try:
-                            raw = await asyncio.wait_for(line_q.get(), timeout=KEEPALIVE_S)
+                            raw = await asyncio.wait_for(
+                                line_iter.__anext__(),
+                                timeout=KEEPALIVE_S,
+                            )
+                        except StopAsyncIteration:
+                            break
                         except asyncio.TimeoutError:
                             keepalive_count += 1
-                            if keepalive_count > int(MAX_QUEUE_SIZE):
+                            if keepalive_count > 200:
                                 yield _flush_batch() or b""
                                 yield b"data: " + orjson.dumps({"error": {"message": "Upstream timeout", "type": "timeout"}}) + b"\n\n"
                                 yield _SSE_DONE
                                 return
-                            # Flush any buffered tokens before sending keepalive
-                            frame = _flush_batch()
-                            if frame:
-                                yield frame
                             yield _SSE_KEEPALIVE
                             continue
 
-                        if raw is None:
-                            break
                         keepalive_count = 0
 
                         if not raw.strip():
@@ -728,13 +711,14 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                         thinking = message.get("thinking", "")
                         tool_calls = message.get("tool_calls")
 
-                        # Accumulate into batch buffers
+                        # ── Token batching ──
+                        # Accumulate small tokens, flush every 100ms or on tool calls.
+                        # Cuts orjson + network roundtrips by ~10-20x.
                         if thinking:
                             batch_thinking.append(thinking)
                         if content:
                             batch_content.append(content)
 
-                        # Flush on: tool calls, time budget, or batch size threshold
                         should_flush = False
                         if tool_calls:
                             has_tool_calls = True
@@ -757,7 +741,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                                     },
                                 })
                                 tool_call_index += 1
-                            # Flush buffer first, then yield tool call separately
+                            # Flush buffered text first, then tool call
                             frame = _flush_batch()
                             if frame:
                                 yield frame
@@ -769,10 +753,10 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                                 delta["tool_calls"] = formatted
                                 yield _sfx + orjson.dumps(delta) + _efx
                             except Exception as e:
-                                logger.error(f"[{request_id}] Serialize tool call failed: {e}")
+                                logger.error(f"[{request_id}] Tool call serialize failed: {e}")
                             should_flush = True
 
-                        if (time.monotonic() - batch_timer) > BATCH_FLUSH_MS / 1000:
+                        if (time.monotonic() - batch_timer) > 0.1:  # 100ms batch window
                             should_flush = True
 
                         if should_flush:
@@ -786,7 +770,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                             completion_tokens = data.get("eval_count", 0)
                             graceful = True
 
-                            # Flush any remaining buffered tokens before done chunk
+                            # Flush remaining buffered tokens before done
                             frame = _flush_batch()
                             if frame:
                                 yield frame
@@ -809,15 +793,6 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                             }) + b"\n\n"
                             break
                 finally:
-                    reader.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await reader
-
-                if reader_error[0]:
-                    logger.error(f"[{request_id}] Reader error: {reader_error[0]}")
-                    yield b"data: " + orjson.dumps({"error": {"message": str(reader_error[0]), "type": "upstream_error"}}) + b"\n\n"
-
-                if not graceful and not reader_error[0]:
                     yield b"data: " + orjson.dumps({
                         "id": request_id_str,
                         "object": "chat.completion.chunk",
