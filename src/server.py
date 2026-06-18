@@ -154,7 +154,7 @@ _request_log = collections.deque(maxlen=500)
 def _open_log_fh():
     global _log_fh
     if _log_fh is None:
-        _log_fh = open(REQUEST_LOG_FILE, "a", buffering=8192)
+        _log_fh = open(REQUEST_LOG_FILE, "a", buffering=1)  # line-buffered for tail -f
 
 
 def _status_color(code):
@@ -631,6 +631,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                 reader = asyncio.create_task(_reader())
                 keepalive_count = 0
                 graceful = False
+                CLOUDFLARE_KEEPALIVE_S = 50.0  # Cloudflare times out at ~100s (524)
                 try:
                     while True:
                         # ═══ Hard Timeout ═══
@@ -647,11 +648,12 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                             return
                         # ═══ End Hard Timeout ═══
 
+                        # Race between: new Ollama data vs keepalive timer
                         try:
-                            raw = await asyncio.wait_for(line_q.get(), timeout=10.0)
+                            raw = await asyncio.wait_for(line_q.get(), timeout=CLOUDFLARE_KEEPALIVE_S)
                         except asyncio.TimeoutError:
                             keepalive_count += 1
-                            if keepalive_count > 120:
+                            if keepalive_count > 200:  # ~100min of silence
                                 yield b"data: " + orjson.dumps({"error": {"message": "Upstream timeout", "type": "timeout"}}) + b"\n\n"
                                 yield _SSE_DONE
                                 return
