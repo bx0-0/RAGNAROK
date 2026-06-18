@@ -47,7 +47,8 @@ HTTP_POOL_TIMEOUT = float(os.environ.get("HTTP_POOL_TIMEOUT", "900.0"))
 MAX_CONNECTIONS = int(os.environ.get("MAX_CONNECTIONS", "2000"))
 MAX_KEEPALIVE_CONNECTIONS = int(os.environ.get("MAX_KEEPALIVE_CONNECTIONS", "500"))
 KEEPALIVE_EXPIRY = int(os.environ.get("KEEPALIVE_EXPIRY", "300"))
-MAX_QUEUE_SIZE = int(os.environ.get("MAX_QUEUE_SIZE", "256"))
+MAX_QUEUE_SIZE = int(os.environ.get("MAX_QUEUE_SIZE", "512"))
+KEEPALIVE_INTERVAL = float(os.environ.get("KEEPALIVE_INTERVAL", "30.0"))  # Cloudflare ~100s timeout
 MAX_KEEPALIVE_PINGS = int(os.environ.get("MAX_KEEPALIVE_PINGS", "120"))
 
 # Precompute ollama options (never changes at runtime)
@@ -616,7 +617,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                     yield _SSE_DONE
                     return
 
-                line_q = asyncio.Queue(maxsize=256)
+                line_q = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
                 reader_error = [None]
 
                 async def _reader():
@@ -631,13 +632,41 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                 reader = asyncio.create_task(_reader())
                 keepalive_count = 0
                 graceful = False
-                CLOUDFLARE_KEEPALIVE_S = 50.0  # Cloudflare times out at ~100s (524)
+
+                # Cloudflare origin timeout ~100s (Error 524).
+                # Fire a ping every 30s so t=30,60,90 all land well under 100.
+                KEEPALIVE_S = 30.0
+
+                # ── Token batching: accumulate small chunks before yielding ──
+                # Amortizes orjson + network overhead per-frame.
+                BATCH_FLUSH_MS = 200        # flush buffer every 200ms max
+                batch_content: list[str] = []
+                batch_thinking: list[str] = []
+                batch_timer = time.monotonic()
+
+                def _flush_batch():
+                    nonlocal batch_content, batch_thinking, first_chunk, batch_timer
+                    if not batch_content and not batch_thinking:
+                        return None
+                    delta = {}
+                    if first_chunk:
+                        delta["role"] = "assistant"
+                        first_chunk = False
+                    if batch_thinking:
+                        delta["reasoning_content"] = "".join(batch_thinking)
+                    if batch_content:
+                        delta["content"] = "".join(batch_content)
+                    batch_content.clear()
+                    batch_thinking.clear()
+                    return _sfx + orjson.dumps(delta) + _efx
+
                 try:
                     while True:
                         # ═══ Hard Timeout ═══
                         stream_elapsed = time.monotonic() - start_time
                         if stream_elapsed > MAX_STREAM_SECONDS:
                             logger.warning(f"[{request_id}] Hard timeout after {int(stream_elapsed)}s")
+                            yield _flush_batch() or b""
                             yield b"data: " + orjson.dumps({
                                 "error": {
                                     "message": f"Generation exceeded {MAX_STREAM_SECONDS}s limit",
@@ -648,15 +677,19 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                             return
                         # ═══ End Hard Timeout ═══
 
-                        # Race between: new Ollama data vs keepalive timer
                         try:
-                            raw = await asyncio.wait_for(line_q.get(), timeout=CLOUDFLARE_KEEPALIVE_S)
+                            raw = await asyncio.wait_for(line_q.get(), timeout=KEEPALIVE_S)
                         except asyncio.TimeoutError:
                             keepalive_count += 1
-                            if keepalive_count > 200:  # ~100min of silence
+                            if keepalive_count > int(MAX_QUEUE_SIZE):
+                                yield _flush_batch() or b""
                                 yield b"data: " + orjson.dumps({"error": {"message": "Upstream timeout", "type": "timeout"}}) + b"\n\n"
                                 yield _SSE_DONE
                                 return
+                            # Flush any buffered tokens before sending keepalive
+                            frame = _flush_batch()
+                            if frame:
+                                yield frame
                             yield _SSE_KEEPALIVE
                             continue
 
@@ -675,6 +708,7 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
 
                         if data.get("error"):
                             logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
+                            yield _flush_batch() or b""
                             yield b"data: " + orjson.dumps({"error": {"message": data["error"]}}) + b"\n\n"
                             yield _SSE_DONE
                             return
@@ -694,56 +728,68 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
                         thinking = message.get("thinking", "")
                         tool_calls = message.get("tool_calls")
 
-                        if first_chunk or thinking or content or tool_calls:
-                            delta = {}
-                            if first_chunk:
-                                delta["role"] = "assistant"
-                                first_chunk = False
-                            if thinking:
-                                delta["reasoning_content"] = thinking
-                            if content:
-                                delta["content"] = content
+                        # Accumulate into batch buffers
+                        if thinking:
+                            batch_thinking.append(thinking)
+                        if content:
+                            batch_content.append(content)
 
-                            if tool_calls:
-                                try:
-                                    has_tool_calls = True
-                                    formatted = []
-                                    for tc in tool_calls:
-                                        tc_name = tc.get("function", {}).get("name") or "?"
-                                        # Log tool name clearly
-                                        logger.info(f"[{request_id}] 🔧 Tool Call: {tc_name}")
-                                        tc_args = tc.get("function", {}).get("arguments", "")
-                                        if isinstance(tc_args, str):
-                                            tc_args_json = tc_args
-                                        else:
-                                            tc_args_json = orjson.dumps(tc_args).decode() if tc_args else ""
-                                        formatted.append({
-                                            "index": tool_call_index,
-                                            "id": tc.get("id") or f"call_{_fast_id()}",
-                                            "type": "function",
-                                            "function": {
-                                                "name": tc_name,
-                                                "arguments": tc_args_json,
-                                            },
-                                        })
-                                        tool_call_index += 1
-                                    delta["tool_calls"] = formatted
-                                except Exception as e:
-                                    logger.error(f"[{request_id}] Tool format error: {e}")
-                                    delta["tool_calls"] = []
-                                if "content" in delta and not delta["content"]:
-                                    del delta["content"]
-
+                        # Flush on: tool calls, time budget, or batch size threshold
+                        should_flush = False
+                        if tool_calls:
+                            has_tool_calls = True
+                            formatted = []
+                            for tc in tool_calls:
+                                tc_name = tc.get("function", {}).get("name") or "?"
+                                logger.info(f"[{request_id}] 🔧 Tool Call: {tc_name}")
+                                tc_args = tc.get("function", {}).get("arguments", "")
+                                if isinstance(tc_args, str):
+                                    tc_args_json = tc_args
+                                else:
+                                    tc_args_json = orjson.dumps(tc_args).decode() if tc_args else ""
+                                formatted.append({
+                                    "index": tool_call_index,
+                                    "id": tc.get("id") or f"call_{_fast_id()}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc_name,
+                                        "arguments": tc_args_json,
+                                    },
+                                })
+                                tool_call_index += 1
+                            # Flush buffer first, then yield tool call separately
+                            frame = _flush_batch()
+                            if frame:
+                                yield frame
                             try:
+                                delta = {}
+                                if first_chunk:
+                                    delta["role"] = "assistant"
+                                    first_chunk = False
+                                delta["tool_calls"] = formatted
                                 yield _sfx + orjson.dumps(delta) + _efx
                             except Exception as e:
-                                logger.error(f"[{request_id}] Serialize delta failed: {e}")
-                                continue
+                                logger.error(f"[{request_id}] Serialize tool call failed: {e}")
+                            should_flush = True
+
+                        if (time.monotonic() - batch_timer) > BATCH_FLUSH_MS / 1000:
+                            should_flush = True
+
+                        if should_flush:
+                            frame = _flush_batch()
+                            if frame:
+                                yield frame
+                            batch_timer = time.monotonic()
 
                         if data.get("done"):
                             prompt_tokens = data.get("prompt_eval_count", 0)
                             completion_tokens = data.get("eval_count", 0)
                             graceful = True
+
+                            # Flush any remaining buffered tokens before done chunk
+                            frame = _flush_batch()
+                            if frame:
+                                yield frame
 
                             yield b"data: " + orjson.dumps({
                                 "id": request_id_str,
