@@ -13,13 +13,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.logging import setup_logging, logger
+from src.logging import setup_logging, logger, _open_log_fh, log_request_start, log_request, _log_fh as _gw_log_fh
 from src.utils import (
     extract_text_content,
     convert_messages_to_ollama,
     format_tool_calls_openai,
     _fast_id,
 )
+from src.errors import _RATE_LIMIT_RESPONSE, _BAD_JSON_RESPONSE
+from src.streaming import handle_stream
 
 # ─── Config ───
 _RAW_MODEL_LIST = os.environ.get("MODEL_NAME", "qwen3:8b").split()
@@ -74,49 +76,6 @@ _OLLAMA_OPTS_WARMUP = {
     "num_predict": 1,
 }
 
-# ─── SSE template factory (cached per-model) ───
-_SSE_MARKER_ID = "\xffID"
-_SSE_MARKER_TS = "\xffTS"
-
-@lru_cache(maxsize=16)
-def _sse_template_for_model(model: str):
-    """Build the SSE JSON envelope once per model with unique string markers.
-    Returns (prefix_bytes, suffix_bytes) ready for:
-        yield prefix + orjson.dumps(delta) + suffix
-    """
-    tpl = orjson.dumps({
-        "id": _SSE_MARKER_ID,
-        "object": "chat.completion.chunk",
-        "created": 0,  # placeholder — replaced below
-        "model": model,
-        "choices": [{"delta": "__DELTA__", "index": 0, "finish_reason": None}],
-    })
-    _marker = b'"__DELTA__"'
-    _id_marker = f'"{_SSE_MARKER_ID}"'.encode()
-    
-    # Split around the delta marker
-    _dpos = tpl.index(_marker)
-    prefix = tpl[:_dpos]
-    suffix = tpl[_dpos + len(_marker):]
-    return (b"data: " + prefix, suffix + b"\n\n")
-
-
-def _make_sse_frames(model: str, request_id_str: str, created: int):
-    """Inject real id + timestamp into cached SSE envelope."""
-    prefix, suffix = _sse_template_for_model(model)
-    # Replace id marker
-    _id_placeholder = f'"{_SSE_MARKER_ID}"'.encode()
-    _real_id = f'"{request_id_str}"'.encode()
-    prefix = prefix.replace(_id_placeholder, _real_id, 1)
-    # Replace timestamp — use a safe byte pattern that won't collide
-    # Since created is always the integer after "created":, we patch "created":0 → real value
-    # But 0 could appear elsewhere. Safer: rebuild just the two fields.
-    # Actually the safest is to not cache at all and just serialize — but that's what we want to avoid.
-    # Compromise: use a large sentinel for created so it's unique in the byte output.
-    prefix = prefix.replace(b'"created":0', f'"created":{created}'.encode(), 1)
-    return (prefix, suffix)
-
-
 # ─── Chunked body reader (avoids buffering huge prompts in RAM) ───
 async def _read_body(request: Request, max_size_mb: int = 50) -> bytes:
     """Read request body without loading >max_size_mb all at once.
@@ -133,100 +92,7 @@ async def _read_body(request: Request, max_size_mb: int = 50) -> bytes:
             raise ValueError(f"Body exceeds {max_size_mb}MB limit")
     return b"".join(chunks)
 
-
-# Precompute static SSE frame bytes
-_SSE_DONE = b"data: [DONE]\n\n"
-_SSE_KEEPALIVE = b': ping\n\n'
-_RATE_LIMIT_RESPONSE = Response(status_code=429, content=orjson.dumps({
-    "error": {
-        "message": "Server is busy. Try again shortly.",
-        "type": "rate_limit_error",
-    },
-}), media_type="application/json")
-_BAD_JSON_RESPONSE = Response(status_code=400, content=b'{"error":"Invalid JSON"}', media_type="application/json")
-
-
-# ─── Async-safe log queue (non-blocking) ───
-_log_fh = None
-_request_log = collections.deque(maxlen=500)
-
-
-def _open_log_fh():
-    global _log_fh
-    if _log_fh is None:
-        _log_fh = open(REQUEST_LOG_FILE, "a", buffering=1)  # line-buffered for tail -f
-
-
-def _status_color(code):
-    if code < 300:
-        return "\033[0;32m"
-    if code == 429:
-        return "\033[0;33m"
-    if code < 500:
-        return "\033[0;31m"
-    return "\033[0;35m"
-
-
-def _status_label(code):
-    if code < 300:
-        return "OK"
-    if code == 429:
-        return "Busy"
-    if code == 400:
-        return "Bad"
-    if code < 500:
-        return "Err"
-    return "Fatal"
-
-
-def _build_log_line(tag, req_id, status_or_method, path=None, extra=None, duration=None, t_in=None, t_out=None):
-    ts = time.strftime("%H:%M:%S")
-    line = f"\033[0;36m[{ts}]\033[0m \033[0;90m{tag}\033[0m \033[1m{req_id}\033[0m "
-    if duration is not None:
-        color = _status_color(status_or_method)
-        label = _status_label(status_or_method)
-        line += (
-            f"{color}{status_or_method} {label}\033[0m "
-            f"{duration}s "
-            f"\033[0;90mt:{t_in}\u2192{t_out}\033[0m"
-        )
-    else:
-        line += f"{status_or_method} {path}"
-    if extra:
-        line += f"  \033[0;33m{extra}\033[0m"
-    return line
-
-
-async def log_request_start(req_id, method, path, extra=""):
-    line = _build_log_line("◀", req_id, method, path, extra=extra)
-    if VERBOSE_LOG:
-        print(line, flush=True)
-    _enqueue_log(line)
-
-
-def _enqueue_log(line: str):
-    _open_log_fh()
-    try:
-        _log_fh.write(line + "\n")
-    except OSError:
-        pass
-
-
-async def log_request(req_id, method, path, status, duration, t_in, t_out, extra=""):
-    _request_log.append({
-        "id": req_id, "method": method, "path": path,
-        "status": status, "duration": duration,
-        "t_in": t_in, "t_out": t_out, "extra": extra,
-    })
-    line = _build_log_line(
-        "▶", req_id, status, path,
-        duration=duration, t_in=t_in, t_out=t_out, extra=extra,
-    )
-    if VERBOSE_LOG:
-        print(line, flush=True)
-    _enqueue_log(line)
-
-
+# ─── Gateway State & Lifecycle ───
 class GatewayState:
     __slots__ = ("http_client", "semaphore", "warmup_task", "is_warm")
 
@@ -306,9 +172,9 @@ async def lifespan(app: FastAPI):
         with contextlib.suppress(asyncio.CancelledError):
             await task
     await state.http_client.aclose()
-    if _log_fh is not None:
-        _log_fh.flush()
-        _log_fh.close()
+    if _gw_log_fh is not None:
+        _gw_log_fh.flush()
+        _gw_log_fh.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -499,7 +365,8 @@ async def openai_completions(request: Request):
         finally:
             state.semaphore.release()
     else:
-        return _handle_stream(state, request_id, ollama_payload_dict, start_time, active_model)
+        return handle_stream(state, request_id, ollama_payload_dict, start_time, active_model,
+                            MAX_STREAM_SECONDS, OLLAMA_CHAT_URL)
 
 
 async def _handle_non_stream(state, request_id, ollama_payload, start_time, created, active_model, request):
@@ -583,279 +450,6 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
             "total_tokens": prompt_tokens + completion_tokens,
         },
     }), media_type="application/json")
-
-
-
-def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
-    request_id_str = f"chatcmpl-{request_id}"
-    created = int(time.time())
-
-    # Use cached SSE template — avoids re-serializing the static envelope per request
-    _sfx, _efx = _make_sse_frames(active_model, request_id_str, created)
-
-    async def stream_generator():
-        first_chunk = True
-        has_tool_calls = False
-        tool_call_index = 0
-        prompt_tokens = completion_tokens = 0
-        released = False
-
-        try:
-            async with state.http_client.stream(
-                "POST", OLLAMA_CHAT_URL,
-                json=ollama_payload,
-            ) as response:
-                if response.status_code != 200:
-                    err_body = await response.aread()
-                    elapsed = round(time.monotonic() - start_time, 2)
-                    # Log the actual upstream error from Ollama
-                    logger.error(f"[{request_id}] Ollama Upstream Error: {err_body.decode()[:300]}")
-                    await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
-                    # Send the real error to the client so they understand the issue
-                    yield b"data: " + err_body + b"\n\n"
-                    yield _SSE_DONE
-                    return
-
-                line_iter = response.aiter_lines().__aiter__()
-                keepalive_count = 0
-                graceful = False
-                KEEPALIVE_S = 30.0  # Cloudflare ~100s origin timeout
-
-                # ── Token batching ──
-                # Accumulate small content/thinking tokens; flush every 100ms.
-                # Amortizes orjson + network overhead across ~10-20 tokens.
-                batch_content: list[str] = []
-                batch_thinking: list[str] = []
-                batch_timer = time.monotonic()
-
-                def _flush_batch():
-                    nonlocal batch_content, batch_thinking, first_chunk, batch_timer
-                    if not batch_content and not batch_thinking:
-                        return None
-                    delta = {}
-                    if first_chunk:
-                        delta["role"] = "assistant"
-                        first_chunk = False
-                    if batch_thinking:
-                        delta["reasoning_content"] = "".join(batch_thinking)
-                    if batch_content:
-                        delta["content"] = "".join(batch_content)
-                    batch_content.clear()
-                    batch_thinking.clear()
-                    batch_timer = time.monotonic()
-                    return _sfx + orjson.dumps(delta) + _efx
-                try:
-                    while True:
-                        # ═══ Hard Timeout ═══
-                        stream_elapsed = time.monotonic() - start_time
-                        if stream_elapsed > MAX_STREAM_SECONDS:
-                            logger.warning(f"[{request_id}] Hard timeout after {int(stream_elapsed)}s")
-                            yield b"data: " + orjson.dumps({
-                                "error": {
-                                    "message": f"Generation exceeded {MAX_STREAM_SECONDS}s limit",
-                                    "type": "timeout",
-                                }
-                            }) + b"\n\n"
-                            yield _SSE_DONE
-                            return
-                        # ═══ End Hard Timeout ═══
-
-                        # Race between: new Ollama data vs keepalive timer
-                        try:
-                            raw = await asyncio.wait_for(
-                                line_iter.__anext__(),
-                                timeout=KEEPALIVE_S,
-                            )
-                        except StopAsyncIteration:
-                            break
-                        except asyncio.TimeoutError:
-                            keepalive_count += 1
-                            if keepalive_count > 200:
-                                yield _flush_batch() or b""
-                                yield b"data: " + orjson.dumps({"error": {"message": "Upstream timeout", "type": "timeout"}}) + b"\n\n"
-                                yield _SSE_DONE
-                                return
-                            yield _SSE_KEEPALIVE
-                            continue
-
-                        keepalive_count = 0
-
-                        if not raw.strip():
-                            continue
-
-                        try:
-                            data = orjson.loads(raw)
-                        except Exception as e:
-                            logger.error(f"[{request_id}] Parse fail: {e} | line={raw[:100]}")
-                            continue
-
-                        if data.get("error"):
-                            logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
-                            yield _flush_batch() or b""
-                            yield b"data: " + orjson.dumps({"error": {"message": data["error"]}}) + b"\n\n"
-                            yield _SSE_DONE
-                            return
-
-                        message = data.get("message", {})
-
-                        content = message.get("content")
-                        if isinstance(content, list):
-                            content = " ".join(
-                                item.get("text", "")
-                                for item in content
-                                if isinstance(item, dict) and item.get("type") == "text"
-                            )
-                        elif not isinstance(content, str):
-                            content = content if content is not None else ""
-
-                        thinking = message.get("thinking", "")
-                        tool_calls = message.get("tool_calls")
-
-                        # ── Token batching ──
-                        # Accumulate small tokens, flush every 100ms or on tool calls.
-                        # Cuts orjson + network roundtrips by ~10-20x.
-                        if thinking:
-                            batch_thinking.append(thinking)
-                        if content:
-                            batch_content.append(content)
-
-                        should_flush = False
-                        if tool_calls:
-                            has_tool_calls = True
-                            formatted = []
-                            for tc in tool_calls:
-                                tc_name = tc.get("function", {}).get("name") or "?"
-                                logger.info(f"[{request_id}] 🔧 Tool Call: {tc_name}")
-                                tc_args = tc.get("function", {}).get("arguments", "")
-                                if isinstance(tc_args, str):
-                                    tc_args_json = tc_args
-                                else:
-                                    tc_args_json = orjson.dumps(tc_args).decode() if tc_args else ""
-                                formatted.append({
-                                    "index": tool_call_index,
-                                    "id": tc.get("id") or f"call_{_fast_id()}",
-                                    "type": "function",
-                                    "function": {
-                                        "name": tc_name,
-                                        "arguments": tc_args_json,
-                                    },
-                                })
-                                tool_call_index += 1
-                            # Flush buffered text first, then tool call
-                            frame = _flush_batch()
-                            if frame:
-                                yield frame
-                            try:
-                                delta = {}
-                                if first_chunk:
-                                    delta["role"] = "assistant"
-                                    first_chunk = False
-                                delta["tool_calls"] = formatted
-                                yield _sfx + orjson.dumps(delta) + _efx
-                            except Exception as e:
-                                logger.error(f"[{request_id}] Tool call serialize failed: {e}")
-                            should_flush = True
-
-                        if (time.monotonic() - batch_timer) > 0.1:  # 100ms batch window
-                            should_flush = True
-
-                        if should_flush:
-                            frame = _flush_batch()
-                            if frame:
-                                yield frame
-                            batch_timer = time.monotonic()
-
-                        if data.get("done"):
-                            prompt_tokens = data.get("prompt_eval_count", 0)
-                            completion_tokens = data.get("eval_count", 0)
-                            graceful = True
-
-                            # Flush remaining buffered tokens before done
-                            frame = _flush_batch()
-                            if frame:
-                                yield frame
-
-                            yield b"data: " + orjson.dumps({
-                                "id": request_id_str,
-                                "object": "chat.completion.chunk",
-                                "created": created,
-                                "model": active_model,
-                                "choices": [{
-                                    "delta": {},
-                                    "index": 0,
-                                    "finish_reason": "tool_calls" if has_tool_calls else "stop",
-                                }],
-                                "usage": {
-                                    "prompt_tokens": prompt_tokens,
-                                    "completion_tokens": completion_tokens,
-                                    "total_tokens": prompt_tokens + completion_tokens,
-                                },
-                            }) + b"\n\n"
-                            break
-                finally:
-                    yield b"data: " + orjson.dumps({
-                        "id": request_id_str,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": active_model,
-                        "choices": [{
-                            "delta": {},
-                            "index": 0,
-                            "finish_reason": "tool_calls" if has_tool_calls else "stop",
-                        }],
-                        "usage": {
-                            "prompt_tokens": prompt_tokens,
-                            "completion_tokens": completion_tokens,
-                            "total_tokens": prompt_tokens + completion_tokens,
-                        },
-                    }) + b"\n\n"
-
-                yield _SSE_DONE
-
-        except asyncio.CancelledError:
-            # Client disconnected
-            logger.warning(f"[{request_id}] Stream cancelled (client disconnected)")
-        except httpx.RemoteProtocolError:
-            logger.error(f"[{request_id}] Ollama connection reset")
-            yield b"data: " + orjson.dumps({"error": {"message": "Upstream connection reset", "type": "upstream_error"}}) + b"\n\n"
-            yield _SSE_DONE
-        except httpx.ConnectError:
-            logger.error(f"[{request_id}] Cannot connect to Ollama")
-            yield b"data: " + orjson.dumps({"error": {"message": "Cannot connect to upstream", "type": "upstream_error"}}) + b"\n\n"
-            yield _SSE_DONE
-        except httpx.ReadTimeout:
-            logger.error(f"[{request_id}] Ollama read timeout")
-            yield b"data: " + orjson.dumps({"error": {"message": "Upstream read timeout", "type": "upstream_error"}}) + b"\n\n"
-            yield _SSE_DONE
-        except Exception as e:
-            logger.error(f"[{request_id}] STREAM CRASH: {e}")
-            yield b"data: " + orjson.dumps({"error": {"message": "Internal server error", "type": "server_error"}}) + b"\n\n"
-            yield _SSE_DONE
-        finally:
-            if not released:
-                released = True
-                # Release the semaphore
-                state.semaphore.release()
-                
-                # Log inside try block so it does not crash if the task is cancelled
-                elapsed = round(time.monotonic() - start_time, 2)
-                try:
-                    await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "STREAM")
-                    logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
-                except asyncio.CancelledError:
-                    # Shield: log on stderr as fallback so we never lose the record
-                    logger.warning(f"[{request_id}] Cancelled before logging | {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
-                    pass
-
-    return StreamingResponse(
-        stream_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 def run_server():
