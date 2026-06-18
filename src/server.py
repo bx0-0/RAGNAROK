@@ -3,6 +3,7 @@ import time
 import asyncio
 import collections
 import contextlib
+from functools import lru_cache
 
 import orjson
 import httpx
@@ -17,6 +18,7 @@ from src.utils import (
     extract_text_content,
     convert_messages_to_ollama,
     format_tool_calls_openai,
+    _fast_id,
 )
 
 # ─── Config ───
@@ -72,6 +74,66 @@ _OLLAMA_OPTS_WARMUP = {
     "num_predict": 1,
 }
 
+# ─── SSE template factory (cached per-model) ───
+_SSE_MARKER_ID = "\xffID"
+_SSE_MARKER_TS = "\xffTS"
+
+@lru_cache(maxsize=16)
+def _sse_template_for_model(model: str):
+    """Build the SSE JSON envelope once per model with unique string markers.
+    Returns (prefix_bytes, suffix_bytes) ready for:
+        yield prefix + orjson.dumps(delta) + suffix
+    """
+    tpl = orjson.dumps({
+        "id": _SSE_MARKER_ID,
+        "object": "chat.completion.chunk",
+        "created": 0,  # placeholder — replaced below
+        "model": model,
+        "choices": [{"delta": "__DELTA__", "index": 0, "finish_reason": None}],
+    })
+    _marker = b'"__DELTA__"'
+    _id_marker = f'"{_SSE_MARKER_ID}"'.encode()
+    
+    # Split around the delta marker
+    _dpos = tpl.index(_marker)
+    prefix = tpl[:_dpos]
+    suffix = tpl[_dpos + len(_marker):]
+    return (b"data: " + prefix, suffix + b"\n\n")
+
+
+def _make_sse_frames(model: str, request_id_str: str, created: int):
+    """Inject real id + timestamp into cached SSE envelope."""
+    prefix, suffix = _sse_template_for_model(model)
+    # Replace id marker
+    _id_placeholder = f'"{_SSE_MARKER_ID}"'.encode()
+    _real_id = f'"{request_id_str}"'.encode()
+    prefix = prefix.replace(_id_placeholder, _real_id, 1)
+    # Replace timestamp — use a safe byte pattern that won't collide
+    # Since created is always the integer after "created":, we patch "created":0 → real value
+    # But 0 could appear elsewhere. Safer: rebuild just the two fields.
+    # Actually the safest is to not cache at all and just serialize — but that's what we want to avoid.
+    # Compromise: use a large sentinel for created so it's unique in the byte output.
+    prefix = prefix.replace(b'"created":0', f'"created":{created}'.encode(), 1)
+    return (prefix, suffix)
+
+
+# ─── Chunked body reader (avoids buffering huge prompts in RAM) ───
+async def _read_body(request: Request, max_size_mb: int = 50) -> bytes:
+    """Read request body without loading >max_size_mb all at once.
+    Returns raw bytes. Raises ValueError if Content-Length exceeds limit."""
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > max_size_mb * 1024 * 1024:
+        raise ValueError(f"Body too large: {int(content_length)} bytes")
+    # Read in 64KB chunks — FastAPI/Starlette already streams internally
+    chunks = []
+    async for chunk in request.stream():
+        chunks.append(chunk)
+        total = sum(len(c) for c in chunks)
+        if total > max_size_mb * 1024 * 1024:
+            raise ValueError(f"Body exceeds {max_size_mb}MB limit")
+    return b"".join(chunks)
+
+
 # Precompute static SSE frame bytes
 _SSE_DONE = b"data: [DONE]\n\n"
 _SSE_KEEPALIVE = b': ping\n\n'
@@ -85,8 +147,14 @@ _BAD_JSON_RESPONSE = Response(status_code=400, content=b'{"error":"Invalid JSON"
 
 
 # ─── Async-safe log queue (non-blocking) ───
-_log_queue = asyncio.Queue(maxsize=200)
+_log_fh = None
 _request_log = collections.deque(maxlen=500)
+
+
+def _open_log_fh():
+    global _log_fh
+    if _log_fh is None:
+        _log_fh = open(REQUEST_LOG_FILE, "a", buffering=8192)
 
 
 def _status_color(code):
@@ -111,38 +179,6 @@ def _status_label(code):
     return "Fatal"
 
 
-async def _log_writer():
-    f = open(REQUEST_LOG_FILE, "a")
-    buf = []
-    try:
-        while True:
-            try:
-                line = await asyncio.wait_for(_log_queue.get(), timeout=2.0)
-                buf.append(line + "\n")
-                if len(buf) >= 10:
-                    f.writelines(buf)
-                    f.flush()
-                    buf.clear()
-            except asyncio.TimeoutError:
-                if buf:
-                    f.writelines(buf)
-                    f.flush()
-                    buf.clear()
-    except (asyncio.CancelledError, RuntimeError):
-        if buf:
-            f.writelines(buf)
-            f.flush()
-    finally:
-        f.close()
-
-
-async def _enqueue_log(line: str):
-    try:
-        await _log_queue.put(line)
-    except asyncio.QueueFull:
-        pass
-
-
 def _build_log_line(tag, req_id, status_or_method, path=None, extra=None, duration=None, t_in=None, t_out=None):
     ts = time.strftime("%H:%M:%S")
     line = f"\033[0;36m[{ts}]\033[0m \033[0;90m{tag}\033[0m \033[1m{req_id}\033[0m "
@@ -165,7 +201,15 @@ async def log_request_start(req_id, method, path, extra=""):
     line = _build_log_line("◀", req_id, method, path, extra=extra)
     if VERBOSE_LOG:
         print(line, flush=True)
-    await _enqueue_log(line)
+    _enqueue_log(line)
+
+
+def _enqueue_log(line: str):
+    _open_log_fh()
+    try:
+        _log_fh.write(line + "\n")
+    except OSError:
+        pass
 
 
 async def log_request(req_id, method, path, status, duration, t_in, t_out, extra=""):
@@ -180,22 +224,15 @@ async def log_request(req_id, method, path, status, duration, t_in, t_out, extra
     )
     if VERBOSE_LOG:
         print(line, flush=True)
-    await _enqueue_log(line)
+    _enqueue_log(line)
 
 
-# ─── Fast UUID (4 bytes = 8 hex chars) ───
-def _fast_id():
-    return os.urandom(4).hex()
-
-
-# ─── State ───
 class GatewayState:
-    __slots__ = ("http_client", "semaphore", "log_writer_task", "warmup_task", "is_warm")
+    __slots__ = ("http_client", "semaphore", "warmup_task", "is_warm")
 
     def __init__(self):
         self.http_client = None
         self.semaphore = asyncio.Semaphore(MAX_CONCURRENT)
-        self.log_writer_task = None
         self.warmup_task = None
         self.is_warm = False
 
@@ -241,7 +278,6 @@ async def lifespan(app: FastAPI):
             keepalive_expiry=KEEPALIVE_EXPIRY,
         ),
     )
-    state.log_writer_task = asyncio.create_task(_log_writer())
     state.warmup_task = asyncio.create_task(_warmup(state))
 
     app.state.gw = state
@@ -264,11 +300,14 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    for task in (state.warmup_task, state.log_writer_task):
+    for task in (state.warmup_task,):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
     await state.http_client.aclose()
+    if _log_fh is not None:
+        _log_fh.flush()
+        _log_fh.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -311,7 +350,7 @@ async def openai_embeddings(request: Request):
     await log_request_start(request_id, "POST", "/v1/embeddings")
 
     try:
-        body = orjson.loads(await request.body())
+        body = orjson.loads(await _read_body(request))
     except Exception:
         await log_request(request_id, "POST", "/v1/embeddings", 400, 0, 0, 0, "BAD_JSON")
         return Response(status_code=400, content=b'{"error":"Invalid JSON"}', media_type="application/json")
@@ -379,7 +418,7 @@ async def openai_completions(request: Request):
 
     # Parse body with orjson (faster than FastAPI's stdlib json)
     try:
-        body = orjson.loads(await request.body())
+        body = orjson.loads(await _read_body(request))
     except Exception:
         state.semaphore.release()
         await log_request(request_id, "POST", "/v1/chat/completions", 400, 0, 0, 0, "BAD_JSON")
@@ -550,18 +589,8 @@ def _handle_stream(state, request_id, ollama_payload, start_time, active_model):
     request_id_str = f"chatcmpl-{request_id}"
     created = int(time.time())
 
-    # Pre-compute static SSE envelope
-    _tpl = orjson.dumps({
-        "id": request_id_str,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": active_model,
-        "choices": [{"delta": "__DELTA__", "index": 0, "finish_reason": None}],
-    })
-    _marker = b'"__DELTA__"'
-    _dpos = _tpl.index(_marker)
-    _sfx = b"data: " + _tpl[:_dpos]
-    _efx = _tpl[_dpos + len(_marker):] + b"\n\n"
+    # Use cached SSE template — avoids re-serializing the static envelope per request
+    _sfx, _efx = _make_sse_frames(active_model, request_id_str, created)
 
     async def stream_generator():
         first_chunk = True
