@@ -281,6 +281,7 @@ async def lifespan(app: FastAPI):
     state.warmup_task = asyncio.create_task(_warmup(state))
 
     app.state.gw = state
+    _open_log_fh()
 
     banner = (
         f"\n{'='*60}\n"
