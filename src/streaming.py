@@ -146,7 +146,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         # ── DEBUG: capture raw Ollama lines ──
                         raw_lines_captured += 1
                         if raw_lines_captured <= 3 or (raw_lines_captured % 50 == 0):
-                            logger.debug(f"[{request_id}] RAW#{raw_lines_captured}: {raw[:200]}")
+                            logger.info(f"[{request_id}] RAW#{raw_lines_captured}: {raw[:200]}")
 
                         try:
                             data = orjson.loads(raw)
@@ -244,7 +244,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                             prompt_tokens = data.get("prompt_eval_count", 0)
                             completion_tokens = data.get("eval_count", 0)
                             graceful = True
-                            logger.debug(
+                            logger.info(
                                 f"[{request_id}] DONE chunk | prompt_eval_count={data.get('prompt_eval_count')} "
                                 f"eval_count={data.get('eval_count')} done_reason={data.get('done_reason')} "
                                 f"total_duration={data.get('total_duration')} load_duration={data.get('load_duration')} "
