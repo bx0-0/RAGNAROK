@@ -110,23 +110,13 @@ def _get_state(request: Request) -> GatewayState:
 
 async def _warmup(state: GatewayState):
     try:
-        payload = {
-            "model": MODEL_NAME,
-            "messages": [{"role": "user", "content": "hi"}],
-            "stream": True,
-            "keep_alive": KEEP_ALIVE,
-            "options": _OLLAMA_OPTS_WARMUP,
-        }
-        async with state.http_client.stream(
-            "POST", OLLAMA_CHAT_URL,
-            json=payload,
-            timeout=300.0,
-        ) as resp:
-            async for line in resp.aiter_lines():
-                if not line.strip():
-                    continue
-                if orjson.loads(line).get("done"):
-                    break
+        await state.http_client.chat(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": "hi"}],
+            stream=False,
+            keep_alive=KEEP_ALIVE,
+            options=_OLLAMA_OPTS_WARMUP,
+        )
         state.is_warm = True
         logger.info(f"Model '{MODEL_NAME}' is warm and ready!")
     except Exception as e:
@@ -379,43 +369,33 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
     prompt_tokens = completion_tokens = 0
 
     try:
-        async with state.http_client.stream(
-            "POST", OLLAMA_CHAT_URL,
-            json=ollama_payload,
-        ) as response:
-            if response.status_code != 200:
-                err = await response.aread()
-                elapsed = round(time.monotonic() - start_time, 2)
-                logger.error(f"[{request_id}] Ollama Upstream Error: {err.decode()[:300]}")
-                await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
-                return Response(status_code=response.status_code, content=err, media_type="application/json")
+        # Build chat kwargs from the ollama payload dict
+        chat_kwargs = {
+            "model": ollama_payload["model"],
+            "messages": ollama_payload["messages"],
+            "stream": False,
+            "keep_alive": ollama_payload.get("keep_alive"),
+            "options": ollama_payload.get("options"),
+        }
+        if "tools" in ollama_payload:
+            chat_kwargs["tools"] = ollama_payload["tools"]
+        if "tool_choice" in ollama_payload:
+            chat_kwargs["tool_choice"] = ollama_payload["tool_choice"]
 
-            async for line in response.aiter_lines():
-                if not line.strip():
-                    continue
+        response = await state.http_client.chat(**chat_kwargs)
 
-                # Abort immediately if client disconnected
-                if await request.is_disconnected():
-                    await response.aclose()
-                    raise asyncio.CancelledError
+        # Extract from ChatResponse
+        msg = response.message
+        if msg.content:
+            content_parts.append(msg.content)
+        thinking = getattr(msg, 'thinking', None)
+        if thinking:
+            thinking_parts.append(thinking)
+        if msg.tool_calls:
+            all_tool_calls.extend(format_tool_calls_openai(msg.tool_calls))
+        prompt_tokens = response.prompt_eval_count or 0
+        completion_tokens = response.eval_count or 0
 
-                data = orjson.loads(line)
-                msg = data.get("message", {})
-
-                content = msg.get("content")
-                if content:
-                    content_parts.append(content)
-                thinking = msg.get("thinking")
-                if thinking:
-                    thinking_parts.append(thinking)
-                tool_calls = msg.get("tool_calls")
-                if tool_calls:
-                    all_tool_calls.extend(format_tool_calls_openai(tool_calls))
-
-                if data.get("done"):
-                    prompt_tokens = data.get("prompt_eval_count", 0)
-                    completion_tokens = data.get("eval_count", 0)
-                    break
     except asyncio.CancelledError:
         elapsed = round(time.monotonic() - start_time, 2)
         await log_request(request_id, "POST", "/v1/chat/completions", 499, elapsed, 0, 0, "CLIENT_DISCONNECTED")

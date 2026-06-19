@@ -42,6 +42,21 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
     released = False
     retry_count = 0
 
+    # ── Build chat kwargs from the ollama payload dict ──
+    chat_kwargs = {
+        "model": ollama_payload["model"],
+        "messages": ollama_payload["messages"],
+        "stream": True,
+    }
+    if ollama_payload.get("keep_alive"):
+        chat_kwargs["keep_alive"] = ollama_payload["keep_alive"]
+    if ollama_payload.get("options"):
+        chat_kwargs["options"] = ollama_payload["options"]
+    if ollama_payload.get("tools"):
+        chat_kwargs["tools"] = ollama_payload["tools"]
+    if ollama_payload.get("tool_choice"):
+        chat_kwargs["tool_choice"] = ollama_payload["tool_choice"]
+
     # ── Immediate ping so client doesn't timeout while we wait for Ollama ──
     yield _SSE_KEEPALIVE
 
@@ -54,257 +69,206 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             return
 
         try:
-            async with state.http_client.stream(
-                "POST", ollama_chat_url,
-                json=ollama_payload,
-            ) as response:
-                if response.status_code != 200:
-                    err_body = await response.aread()
-                    elapsed = round(time.monotonic() - start_time, 2)
-                    logger.error(f"[{request_id}] Ollama Upstream Error: {err_body.decode()[:300]}")
-                    await log_request(request_id, "POST", "/v1/chat/completions", response.status_code, elapsed, 0, 0, "UPSTREAM_ERR")
-                    yield err_body if err_body.startswith(b"{") else b"data: " + err_body
-                    yield _SSE_DONE
-                    return
+            # ── Send immediate ping to keep connection alive while model thinks ──
+            yield _SSE_KEEPALIVE
 
-                # ── Send immediate ping to keep connection alive while model thinks ──
-                yield _SSE_KEEPALIVE
+            # ── Token batching ──
+            batch_content: list[str] = []
+            batch_thinking: list[str] = []
+            batch_timer = time.monotonic()
+            chunks_captured = 0
+            died_mid_stream = False
+            graceful = False
 
-                # ── Setup direct iterator (no Queue indirection) ──
-                line_iter = response.aiter_lines().__aiter__()
-                keepalive_count = 0
-                graceful = False
-                KEEPALIVE_S = 10.0
-                raw_lines_captured = 0
-                died_mid_stream = False
-
-                # ── Token batching ──
-                batch_content: list[str] = []
-                batch_thinking: list[str] = []
+            def _flush_batch():
+                nonlocal batch_content, batch_thinking, first_chunk, batch_timer
+                if not batch_content and not batch_thinking:
+                    return None
+                delta: dict = {}
+                if first_chunk:
+                    delta["role"] = "assistant"
+                    first_chunk = False
+                if batch_thinking:
+                    delta["reasoning_content"] = "".join(batch_thinking)
+                if batch_content:
+                    delta["content"] = "".join(batch_content)
+                batch_content.clear()
+                batch_thinking.clear()
                 batch_timer = time.monotonic()
+                return sfx + orjson.dumps(delta) + efx
 
-                def _flush_batch():
-                    nonlocal batch_content, batch_thinking, first_chunk, batch_timer
-                    if not batch_content and not batch_thinking:
-                        return None
-                    delta: dict = {}
-                    if first_chunk:
-                        delta["role"] = "assistant"
-                        first_chunk = False
-                    if batch_thinking:
-                        delta["reasoning_content"] = "".join(batch_thinking)
-                    if batch_content:
-                        delta["content"] = "".join(batch_content)
-                    batch_content.clear()
-                    batch_thinking.clear()
-                    batch_timer = time.monotonic()
-                    return sfx + orjson.dumps(delta) + efx
-
-                try:
-                    while True:
-                        # ── Hard Timeout ──
-                        stream_elapsed = time.monotonic() - start_time
-                        if stream_elapsed > max_stream_s:
-                            logger.warning(f"[{request_id}] Hard timeout after {int(stream_elapsed)}s")
-                            yield build_sse_error_frame(
-                                f"Generation exceeded {max_stream_s}s limit", "timeout"
-                            )
-                            yield build_done_chunk(
-                                request_id_str, created, active_model,
-                                has_tool_calls, prompt_tokens, completion_tokens,
-                            )
-                            yield _SSE_DONE
-                            return
-
-                        # ── Race: Ollama data vs keepalive ──
-                        try:
-                            raw = await asyncio.wait_for(
-                                line_iter.__anext__(),
-                                timeout=KEEPALIVE_S,
-                            )
-                        except StopAsyncIteration:
-                            died_mid_stream = True  # Ollama closed connection without done chunk
-                            logger.warning(
-                                f"[{request_id}] Ollama stream ended abruptly after {raw_lines_captured} lines "
-                                f"(thinking={bool(batch_thinking)} content={bool(batch_content)})"
-                            )
-                            break
-                        except asyncio.TimeoutError:
-                            keepalive_count += 1
-                            if keepalive_count > 200:
-                                frame = _flush_batch()
-                                if frame:
-                                    yield frame
-                                yield build_sse_error_frame("Upstream timeout", "timeout")
-                                yield build_done_chunk(
-                                    request_id_str, created, active_model,
-                                    has_tool_calls, prompt_tokens, completion_tokens,
-                                )
-                                yield _SSE_DONE
-                                return
-                            yield _SSE_KEEPALIVE
-                            continue
-
-                        keepalive_count = 0
-
-                        if not raw.strip():
-                            continue
-
-                        # ── DEBUG: capture raw Ollama lines ──
-                        raw_lines_captured += 1
-                        if raw_lines_captured <= 3 or (raw_lines_captured % 50 == 0):
-                            logger.info(f"[{request_id}] RAW#{raw_lines_captured}: {raw[:200]}")
-
-                        try:
-                            data = orjson.loads(raw)
-                        except Exception as e:
-                            logger.error(f"[{request_id}] Parse fail: {e} | line={raw[:100]}")
-                            continue
-
-                        # ── Ollama-side error ──
-                        if data.get("error"):
-                            logger.error(f"[{request_id}] Ollama error: {data.get('error')}")
-                            frame = _flush_batch()
-                            if frame:
-                                yield frame
-                            yield build_sse_error_frame(data["error"])
-                            yield build_done_chunk(
-                                request_id_str, created, active_model,
-                                has_tool_calls, prompt_tokens, completion_tokens,
-                            )
-                            yield _SSE_DONE
-                            return
-
-                        message = data.get("message", {})
-
-                        content = message.get("content")
-                        if isinstance(content, list):
-                            content = " ".join(
-                                item.get("text", "")
-                                for item in content
-                                if isinstance(item, dict) and item.get("type") == "text"
-                            )
-                        elif not isinstance(content, str):
-                            content = content if content is not None else ""
-
-                        thinking = message.get("thinking", "")
-                        tool_calls = message.get("tool_calls")
-
-                        # ── Accumulate into batch ──
-                        if thinking:
-                            batch_thinking.append(thinking)
-                        if content:
-                            batch_content.append(content)
-
-                        should_flush = False
-
-                        # ── Tool calls force immediate flush ──
-                        if tool_calls:
-                            has_tool_calls = True
-                            formatted = []
-                            for tc in tool_calls:
-                                tc_name = tc.get("function", {}).get("name") or "?"
-                                logger.info(f"[{request_id}] 🔧 Tool Call: {tc_name}")
-                                tc_args = tc.get("function", {}).get("arguments", "")
-                                if isinstance(tc_args, str):
-                                    tc_args_json = tc_args
-                                else:
-                                    tc_args_json = orjson.dumps(tc_args).decode() if tc_args else ""
-                                formatted.append({
-                                    "index": tool_call_index,
-                                    "id": tc.get("id") or f"call_{_fast_id()}",
-                                    "type": "function",
-                                    "function": {
-                                        "name": tc_name,
-                                        "arguments": tc_args_json,
-                                    },
-                                })
-                                tool_call_index += 1
-
-                            # Flush buffered text first, then yield tool call
-                            frame = _flush_batch()
-                            if frame:
-                                yield frame
-                            try:
-                                delta: dict = {}
-                                if first_chunk:
-                                    delta["role"] = "assistant"
-                                    first_chunk = False
-                                delta["tool_calls"] = formatted
-                                yield sfx + orjson.dumps(delta) + efx
-                            except Exception as ex:
-                                logger.error(f"[{request_id}] Tool call serialize failed: {ex}")
-                            should_flush = True
-
-                        # ── Time-based flush ──
-                        if (time.monotonic() - batch_timer) > 0.1:
-                            should_flush = True
-
-                        if should_flush:
-                            frame = _flush_batch()
-                            if frame:
-                                yield frame
-                            batch_timer = time.monotonic()
-
-                        # ── Done from Ollama ──
-                        if data.get("done"):
-                            prompt_tokens = data.get("prompt_eval_count", 0)
-                            completion_tokens = data.get("eval_count", 0)
-                            graceful = True
-                            logger.info(
-                                f"[{request_id}] DONE chunk | prompt_eval_count={data.get('prompt_eval_count')} "
-                                f"eval_count={data.get('eval_count')} done_reason={data.get('done_reason')} "
-                                f"total_duration={data.get('total_duration')} load_duration={data.get('load_duration')} "
-                                f"lines_received={raw_lines_captured}"
-                            )
-
-                            # Flush remaining tokens before done chunk
-                            frame = _flush_batch()
-                            if frame:
-                                yield frame
-
-                            yield build_done_chunk(
-                                request_id_str, created, active_model,
-                                has_tool_calls, prompt_tokens, completion_tokens,
-                            )
-                            break
-                finally:
-                    # ── Zero-token detection: retry or graceful exit ──
-                    if not graceful and prompt_tokens == 0 and completion_tokens == 0:
-                        if died_mid_stream:
-                            # Ollama crashed mid-stream — this is not an empty response, it's a failure
-                            logger.error(
-                                f"[{request_id}] Ollama died mid-stream after {raw_lines_captured} lines — retrying"
-                            )
-                            retry_count += 1
-                            if retry_count <= MAX_RETRIES:
-                                await asyncio.sleep(2)
-                                continue  # retry
-                            # retries exhausted
-                            yield build_sse_error_frame("Upstream model crashed mid-generation", "upstream_error")
-                            yield build_done_chunk(
-                                request_id_str, created, active_model,
-                                has_tool_calls, prompt_tokens, completion_tokens,
-                            )
-                        else:
-                            retry_count += 1
-                            logger.warning(
-                                f"[{request_id}] Empty stream (attempt {retry_count}/{MAX_RETRIES})"
-                            )
-                            if _should_retry_empty() and retry_count <= MAX_RETRIES:
-                                yield _SSE_KEEPALIVE
-                                await asyncio.sleep(1)
-                                continue  # retry the request
-                            # Either retries disabled or exhausted — yield valid empty completion
-                            yield build_done_chunk(
-                                request_id_str, created, active_model,
-                                has_tool_calls, prompt_tokens, completion_tokens,
-                            )
-                    elif not graceful:
+            try:
+                # ── Stream using ollama AsyncClient.chat(stream=True) ──
+                async for chunk in await state.http_client.chat(**chat_kwargs):
+                    # ── Hard Timeout ──
+                    stream_elapsed = time.monotonic() - start_time
+                    if stream_elapsed > max_stream_s:
+                        logger.warning(f"[{request_id}] Hard timeout after {int(stream_elapsed)}s")
+                        frame = _flush_batch()
+                        if frame:
+                            yield frame
+                        yield build_sse_error_frame(
+                            f"Generation exceeded {max_stream_s}s limit", "timeout"
+                        )
                         yield build_done_chunk(
                             request_id_str, created, active_model,
                             has_tool_calls, prompt_tokens, completion_tokens,
                         )
+                        yield _SSE_DONE
+                        return
+
+                    chunks_captured += 1
+                    if chunks_captured <= 3 or (chunks_captured % 50 == 0):
+                        msg = chunk.message
+                        raw_preview = f"content={msg.content[:30]!r} thinking={getattr(msg, 'thinking', '')[:20]!r} done={chunk.done}"
+                        logger.info(f"[{request_id}] CHUNK#{chunks_captured}: {raw_preview}")
+
+                    msg = chunk.message
+
+                    # ── Extract content ──
+                    content = msg.content or ""
+                    if isinstance(content, list):
+                        content = " ".join(
+                            item.get("text", "")
+                            for item in content
+                            if isinstance(item, dict) and item.get("type") == "text"
+                        )
+
+                    # ── Extract thinking ──
+                    thinking = getattr(msg, "thinking", "") or ""
+
+                    # ── Accumulate into batch ──
+                    if thinking:
+                        batch_thinking.append(thinking)
+                    if content:
+                        batch_content.append(content)
+
+                    should_flush = False
+
+                    # ── Tool calls force immediate flush ──
+                    tool_calls = msg.tool_calls
+                    if tool_calls:
+                        has_tool_calls = True
+                        formatted = []
+                        for tc in tool_calls:
+                            tc_func = getattr(tc, "function", None)
+                            if tc_func:
+                                tc_name = getattr(tc_func, "name", "?")
+                                tc_args = getattr(tc_func, "arguments", "")
+                            else:
+                                tc_name = "?"
+                                tc_args = ""
+                            logger.info(f"[{request_id}] 🔧 Tool Call: {tc_name}")
+                            if isinstance(tc_args, str):
+                                tc_args_json = tc_args
+                            else:
+                                tc_args_json = orjson.dumps(tc_args).decode() if tc_args else ""
+
+                            formatted.append({
+                                "index": tool_call_index,
+                                "id": getattr(tc, "id", None) or f"call_{_fast_id()}",
+                                "type": "function",
+                                "function": {
+                                    "name": tc_name,
+                                    "arguments": tc_args_json,
+                                },
+                            })
+                            tool_call_index += 1
+
+                        # Flush buffered text first, then yield tool call
+                        frame = _flush_batch()
+                        if frame:
+                            yield frame
+                        try:
+                            delta: dict = {}
+                            if first_chunk:
+                                delta["role"] = "assistant"
+                                first_chunk = False
+                            delta["tool_calls"] = formatted
+                            yield sfx + orjson.dumps(delta) + efx
+                        except Exception as ex:
+                            logger.error(f"[{request_id}] Tool call serialize failed: {ex}")
+                        should_flush = True
+
+                    # ── Time-based flush ──
+                    if (time.monotonic() - batch_timer) > 0.1:
+                        should_flush = True
+
+                    if should_flush:
+                        frame = _flush_batch()
+                        if frame:
+                            yield frame
+                        batch_timer = time.monotonic()
+
+                    # ── Done from Ollama ──
+                    if chunk.done:
+                        prompt_tokens = chunk.prompt_eval_count or 0
+                        completion_tokens = chunk.eval_count or 0
+                        graceful = True
+                        logger.info(
+                            f"[{request_id}] DONE chunk | prompt_eval_count={chunk.prompt_eval_count} "
+                            f"eval_count={chunk.eval_count} done_reason={chunk.done_reason} "
+                            f"total_duration={chunk.total_duration} load_duration={chunk.load_duration} "
+                            f"chunks_received={chunks_captured}"
+                        )
+
+                        # Flush remaining tokens before done chunk
+                        frame = _flush_batch()
+                        if frame:
+                            yield frame
+
+                        yield build_done_chunk(
+                            request_id_str, created, active_model,
+                            has_tool_calls, prompt_tokens, completion_tokens,
+                        )
+                        break
+
+            except asyncio.CancelledError:
+                raise  # will be caught by outer handler
+            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                died_mid_stream = True
+                logger.error(f"[{request_id}] Ollama connection error: {e}")
+                break
+            except Exception as e:
+                logger.error(f"[{request_id}] Stream loop error: {e}")
+                break
+            finally:
+                # ── Zero-token detection: retry or graceful exit ──
+                if not graceful and prompt_tokens == 0 and completion_tokens == 0:
+                    if died_mid_stream:
+                        # Ollama crashed mid-stream — this is not an empty response, it's a failure
+                        logger.error(
+                            f"[{request_id}] Ollama died mid-stream after {chunks_captured} chunks — retrying"
+                        )
+                        retry_count += 1
+                        if retry_count <= MAX_RETRIES:
+                            await asyncio.sleep(2)
+                            continue  # retry
+                        # retries exhausted
+                        yield build_sse_error_frame("Upstream model crashed mid-generation", "upstream_error")
+                        yield build_done_chunk(
+                            request_id_str, created, active_model,
+                            has_tool_calls, prompt_tokens, completion_tokens,
+                        )
+                    else:
+                        retry_count += 1
+                        logger.warning(
+                            f"[{request_id}] Empty stream (attempt {retry_count}/{MAX_RETRIES})"
+                        )
+                        if _should_retry_empty() and retry_count <= MAX_RETRIES:
+                            yield _SSE_KEEPALIVE
+                            await asyncio.sleep(1)
+                            continue  # retry the request
+                        # Either retries disabled or exhausted — yield valid empty completion
+                        yield build_done_chunk(
+                            request_id_str, created, active_model,
+                            has_tool_calls, prompt_tokens, completion_tokens,
+                        )
+                elif not graceful:
+                    yield build_done_chunk(
+                        request_id_str, created, active_model,
+                        has_tool_calls, prompt_tokens, completion_tokens,
+                    )
 
             yield _SSE_DONE
             break  # success — exit retry loop
@@ -312,27 +276,10 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
         except asyncio.CancelledError:
             logger.warning(f"[{request_id}] Stream cancelled (client disconnected)")
             return
-        except httpx.RemoteProtocolError:
-            logger.error(f"[{request_id}] Ollama connection reset")
-            yield build_sse_error_frame("Upstream connection reset", "upstream_error")
-            yield build_done_chunk(
-                request_id_str, created, active_model,
-                has_tool_calls, prompt_tokens, completion_tokens,
-            )
-            yield _SSE_DONE
-            return
-        except httpx.ConnectError:
-            logger.error(f"[{request_id}] Cannot connect to Ollama")
-            yield build_sse_error_frame("Cannot connect to upstream", "upstream_error")
-            yield build_done_chunk(
-                request_id_str, created, active_model,
-                has_tool_calls, prompt_tokens, completion_tokens,
-            )
-            yield _SSE_DONE
-            return
-        except httpx.ReadTimeout:
-            logger.error(f"[{request_id}] Ollama read timeout")
-            yield build_sse_error_frame("Upstream read timeout", "upstream_error")
+        except ollama.ResponseError as e:
+            elapsed = round(time.monotonic() - start_time, 2)
+            logger.error(f"[{request_id}] Ollama ResponseError {e.status_code}: {e.error}")
+            yield build_sse_error_frame(str(e.error)[:100], "upstream_error")
             yield build_done_chunk(
                 request_id_str, created, active_model,
                 has_tool_calls, prompt_tokens, completion_tokens,
