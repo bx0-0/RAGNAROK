@@ -104,6 +104,7 @@ fi
 echo -e "\033[0;35m\033[1m  ${SEP}\033[0m"
 echo -e "\033[2m  curl \033[1;33m${PUBLIC_URL}/v1/models\033[2m\033[0m"
 echo -e "\033[0;35m\033[1m  ${SEP}\033[0m"
+echo -e "\033[2m  Created by \033[1;37mSaber Mohamed\033[0;2m  |  RAGNAROK Gateway\033[0m"
 echo ""
 
 # ── Phase 7: Runtime loop ──
