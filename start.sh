@@ -90,6 +90,7 @@ done
 
 export MODEL_NAME FIRST_MODEL MAX_CONCURRENT NUM_CTX NUM_PREDICT NUM_BATCH
 export FLASH_ATTN NUM_GPU KEEP_ALIVE PORT DEBUG_MODE VERBOSE_LOG
+export SERVER_LOG_FILE TUNNEL_LOG_FILE URL_FILE OLLAMA_PULL_LOG REQUEST_LOG_FILE
 
 clear
 echo ""
@@ -127,7 +128,7 @@ pkill -f "src.server" 2>/dev/null || true
 fuser -k "${PORT}/tcp" 2>/dev/null || true
 sleep 1
 
-python3 -m src.server > /tmp/gateway-server.log 2>&1 &
+python3 -m src.server > "${SERVER_LOG_FILE}" 2>&1 &
 SERVER_PID=$!
 echo -e "  ${DIM}PID: ${YELLOW}${SERVER_PID}${NC}"
 
@@ -149,7 +150,7 @@ if [ "$READY" -ne 1 ]; then
     echo ""
     echo -e "  ${RED}❌ Server failed to start${NC}"
     echo -e "  ${YELLOW}Last 30 lines of server log:${NC}"
-    tail -30 /tmp/gateway-server.log 2>/dev/null
+    tail -30 "${SERVER_LOG_FILE}" 2>/dev/null
     kill $SERVER_PID 2>/dev/null || true
     exit 1
 fi
@@ -157,4 +158,4 @@ echo -e " ${GREEN}✅${NC}"
 
 # ─── Step 4 ───
 echo -e "${BOLD}${WHITE}[4/4]${NC} ${DIM}Creating Cloudflare tunnel...${NC}"
-bash "$SCRIPT_DIR/scripts/tunnel.sh"
+bash "$SCRIPT_DIR/scripts/tunnel_orchestrate.sh"
