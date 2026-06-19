@@ -31,7 +31,7 @@ for MODEL in $MODELS; do
     if [ -n "$MODEL_EXISTS" ]; then
         echo "  │  ℹ️  Model already cached"
     else
-        ollama pull "$MODEL" > /tmp/ollama-pull.log 2>&1 &
+        ollama pull "$MODEL" > "${OLLAMA_PULL_LOG}" 2>&1 &
         PULL_PID=$!
         printf "  │  Downloading "
         while kill -0 $PULL_PID 2>/dev/null; do
