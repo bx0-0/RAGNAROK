@@ -250,7 +250,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                             )
                             break
                 finally:
-                    # ── Zero-token detection: retry or error based on RETRY_ON_EMPTY ──
+                    # ── Zero-token detection: retry or graceful exit ──
                     if not graceful and prompt_tokens == 0 and completion_tokens == 0:
                         retry_count += 1
                         logger.warning(
@@ -260,25 +260,11 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                             yield _SSE_KEEPALIVE
                             await asyncio.sleep(1)
                             continue  # retry the request
-                        elif not _should_retry_empty():
-                            # Retries disabled — return error immediately
-                            yield build_sse_error_frame(
-                                "Upstream returned empty response", "upstream_empty"
-                            )
-                            yield build_done_chunk(
-                                request_id_str, created, active_model,
-                                has_tool_calls, prompt_tokens, completion_tokens,
-                            )
-                            break
-                        else:
-                            # Max retries exhausted with retry enabled
-                            yield build_sse_error_frame(
-                                "Upstream returned empty response", "upstream_empty"
-                            )
-                            yield build_done_chunk(
-                                request_id_str, created, active_model,
-                                has_tool_calls, prompt_tokens, completion_tokens,
-                            )
+                        # Either retries disabled or exhausted — yield valid empty completion
+                        yield build_done_chunk(
+                            request_id_str, created, active_model,
+                            has_tool_calls, prompt_tokens, completion_tokens,
+                        )
                     elif not graceful:
                         yield build_done_chunk(
                             request_id_str, created, active_model,
