@@ -6,7 +6,7 @@ import orjson
 
 # ─── Static SSE bytes ───
 _SSE_DONE = b"data: [DONE]\n\n"
-_SSE_KEEPALIVE = b": ping\n\n"
+_SSE_KEEPALIVE = b"data: {\"choices\":[{\"delta\":{},\"index\":0,\"finish_reason\":null}]}\n\n"
 
 # Marker used inside cached template to be replaced at runtime
 _SSE_MARKER_ID = "\xffID"
