@@ -33,6 +33,9 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
     prompt_tokens = completion_tokens = 0
     released = False
 
+    # ── Immediate ping so client doesn't timeout while we wait for Ollama ──
+    yield _SSE_KEEPALIVE
+
     try:
         async with state.http_client.stream(
             "POST", ollama_chat_url,
@@ -47,11 +50,14 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 yield _SSE_DONE
                 return
 
+            # ── Send immediate ping to keep connection alive while model thinks ──
+            yield _SSE_KEEPALIVE
+
             # ── Setup direct iterator (no Queue indirection) ──
             line_iter = response.aiter_lines().__aiter__()
             keepalive_count = 0
             graceful = False
-            KEEPALIVE_S = 30.0
+            KEEPALIVE_S = 10.0
 
             # ── Token batching ──
             batch_content: list[str] = []
