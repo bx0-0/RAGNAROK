@@ -75,6 +75,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 graceful = False
                 KEEPALIVE_S = 10.0
                 raw_lines_captured = 0
+                died_mid_stream = False
 
                 # ── Token batching ──
                 batch_content: list[str] = []
@@ -121,6 +122,11 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                                 timeout=KEEPALIVE_S,
                             )
                         except StopAsyncIteration:
+                            died_mid_stream = True  # Ollama closed connection without done chunk
+                            logger.warning(
+                                f"[{request_id}] Ollama stream ended abruptly after {raw_lines_captured} lines "
+                                f"(thinking={bool(batch_thinking)} content={bool(batch_content)})"
+                            )
                             break
                         except asyncio.TimeoutError:
                             keepalive_count += 1
@@ -264,19 +270,35 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 finally:
                     # ── Zero-token detection: retry or graceful exit ──
                     if not graceful and prompt_tokens == 0 and completion_tokens == 0:
-                        retry_count += 1
-                        logger.warning(
-                            f"[{request_id}] Empty stream (attempt {retry_count}/{MAX_RETRIES})"
-                        )
-                        if _should_retry_empty() and retry_count <= MAX_RETRIES:
-                            yield _SSE_KEEPALIVE
-                            await asyncio.sleep(1)
-                            continue  # retry the request
-                        # Either retries disabled or exhausted — yield valid empty completion
-                        yield build_done_chunk(
-                            request_id_str, created, active_model,
-                            has_tool_calls, prompt_tokens, completion_tokens,
-                        )
+                        if died_mid_stream:
+                            # Ollama crashed mid-stream — this is not an empty response, it's a failure
+                            logger.error(
+                                f"[{request_id}] Ollama died mid-stream after {raw_lines_captured} lines — retrying"
+                            )
+                            retry_count += 1
+                            if retry_count <= MAX_RETRIES:
+                                await asyncio.sleep(2)
+                                continue  # retry
+                            # retries exhausted
+                            yield build_sse_error_frame("Upstream model crashed mid-generation", "upstream_error")
+                            yield build_done_chunk(
+                                request_id_str, created, active_model,
+                                has_tool_calls, prompt_tokens, completion_tokens,
+                            )
+                        else:
+                            retry_count += 1
+                            logger.warning(
+                                f"[{request_id}] Empty stream (attempt {retry_count}/{MAX_RETRIES})"
+                            )
+                            if _should_retry_empty() and retry_count <= MAX_RETRIES:
+                                yield _SSE_KEEPALIVE
+                                await asyncio.sleep(1)
+                                continue  # retry the request
+                            # Either retries disabled or exhausted — yield valid empty completion
+                            yield build_done_chunk(
+                                request_id_str, created, active_model,
+                                has_tool_calls, prompt_tokens, completion_tokens,
+                            )
                     elif not graceful:
                         yield build_done_chunk(
                             request_id_str, created, active_model,
