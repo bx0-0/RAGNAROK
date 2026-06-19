@@ -222,11 +222,16 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         )
                         break
             finally:
-                # Always emit a final usage chunk (even on abnormal exit)
-                yield build_done_chunk(
-                    request_id_str, created, active_model,
-                    has_tool_calls, prompt_tokens, completion_tokens,
-                )
+                # ── Zero-token detection: Ollama returned empty stream ──
+                if not graceful and prompt_tokens == 0 and completion_tokens == 0:
+                    logger.warning(f"[{request_id}] Ollama returned empty stream (0 tokens) — likely malformed request")
+                    yield build_sse_error_frame("Upstream returned empty response", "upstream_empty")
+                elif not graceful:
+                    # Always emit a final usage chunk (even on abnormal exit)
+                    yield build_done_chunk(
+                        request_id_str, created, active_model,
+                        has_tool_calls, prompt_tokens, completion_tokens,
+                    )
 
             yield _SSE_DONE
 
