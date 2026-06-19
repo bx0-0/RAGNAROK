@@ -3,6 +3,7 @@
 import os
 import time
 import asyncio
+import traceback
 
 import orjson
 import httpx
@@ -120,10 +121,17 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     chunks_captured += 1
                     if chunks_captured <= 3 or (chunks_captured % 50 == 0):
                         msg = chunk.message
-                        raw_preview = f"content={msg.content[:30]!r} thinking={getattr(msg, 'thinking', '')[:20]!r} done={chunk.done}"
+                        raw_preview = (
+                            f"content={repr((msg.content or '')[:30])} "
+                            f"thinking={repr((getattr(msg, 'thinking', '') or '')[:20])} "
+                            f"done={chunk.done}"
+                        )
                         logger.info(f"[{request_id}] CHUNK#{chunks_captured}: {raw_preview}")
 
                     msg = chunk.message
+                    if msg is None:
+                        # Empty final chunk — done
+                        continue
 
                     # ── Extract content ──
                     content = msg.content or ""
@@ -137,7 +145,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     # ── Extract thinking ──
                     thinking = getattr(msg, "thinking", "") or ""
 
-                    # ── Accumulate into batch ──
+                    # ── Accumulate into batch (guard against None) ──
                     if thinking:
                         batch_thinking.append(thinking)
                     if content:
@@ -147,23 +155,24 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
 
                     # ── Tool calls force immediate flush ──
                     tool_calls = msg.tool_calls
-                    if tool_calls:
+                    if tool_calls:  # guard against None
                         has_tool_calls = True
                         formatted = []
                         for tc in tool_calls:
+                            if tc is None:
+                                continue
                             tc_func = getattr(tc, "function", None)
-                            if tc_func:
-                                tc_name = getattr(tc_func, "name", "?")
-                                tc_args = getattr(tc_func, "arguments", "")
-                            else:
+                            if tc_func is None:
                                 tc_name = "?"
-                                tc_args = ""
-                            logger.info(f"[{request_id}] 🔧 Tool Call: {tc_name}")
-                            if isinstance(tc_args, str):
-                                tc_args_json = tc_args
+                                tc_args_json = "{}"
                             else:
-                                tc_args_json = orjson.dumps(tc_args).decode() if tc_args else ""
-
+                                tc_name = getattr(tc_func, "name", "?") or "?"
+                                tc_args = getattr(tc_func, "arguments", None) or ""
+                                if isinstance(tc_args, str):
+                                    tc_args_json = tc_args
+                                else:
+                                    tc_args_json = orjson.dumps(tc_args).decode() if tc_args else "{}"
+                            logger.info(f"[{request_id}] 🔧 Tool Call: {tc_name}")
                             formatted.append({
                                 "index": tool_call_index,
                                 "id": getattr(tc, "id", None) or f"call_{_fast_id()}",
@@ -231,6 +240,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 break
             except Exception as e:
                 logger.error(f"[{request_id}] Stream loop error: {e}")
+                logger.error(f"[{request_id}] Trace: {traceback.format_exc()[:500]}")
                 break
             finally:
                 # ── Zero-token detection: retry or graceful exit ──
@@ -288,6 +298,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             return
         except Exception as e:
             logger.error(f"[{request_id}] STREAM CRASH: {e}")
+            logger.error(f"[{request_id}] Trace: {traceback.format_exc()[:500]}")
             yield build_sse_error_frame("Internal server error", "server_error")
             yield build_done_chunk(
                 request_id_str, created, active_model,
