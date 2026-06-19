@@ -7,6 +7,7 @@ from functools import lru_cache
 
 import orjson
 import httpx
+import ollama
 import uvloop
 import uvicorn
 from fastapi import FastAPI, Request
@@ -136,13 +137,15 @@ async def _warmup(state: GatewayState):
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     state = GatewayState()
-    state.http_client = httpx.AsyncClient(
+    state.http_client = ollama.AsyncClient(
+        host=OLLAMA_BASE_URL,
         timeout=httpx.Timeout(connect=HTTP_CONNECT_TIMEOUT, read=HTTP_READ_TIMEOUT, write=HTTP_WRITE_TIMEOUT, pool=HTTP_POOL_TIMEOUT),
         limits=httpx.Limits(
             max_connections=MAX_CONNECTIONS,
             max_keepalive_connections=MAX_KEEPALIVE_CONNECTIONS,
             keepalive_expiry=KEEPALIVE_EXPIRY,
         ),
+        follow_redirects=True,
     )
     state.warmup_task = asyncio.create_task(_warmup(state))
 

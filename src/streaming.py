@@ -6,6 +6,7 @@ import asyncio
 
 import orjson
 import httpx
+import ollama
 
 from fastapi.responses import StreamingResponse
 
