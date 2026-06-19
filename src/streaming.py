@@ -1,5 +1,6 @@
 """Streaming SSE generator — extracted from server for readability."""
 
+import os
 import time
 import asyncio
 
@@ -22,6 +23,10 @@ from src.errors import build_sse_error_frame
 # They're passed via config dict instead.
 
 MAX_RETRIES = 2
+
+
+def _should_retry_empty() -> bool:
+    return os.environ.get("RETRY_ON_EMPTY", "False").lower() in ("true", "1", "yes")
 
 
 async def stream_generator(state, request_id, ollama_payload, start_time,
@@ -245,17 +250,28 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                             )
                             break
                 finally:
-                    # ── Zero-token detection: retry instead of error ──
+                    # ── Zero-token detection: retry or error based on RETRY_ON_EMPTY ──
                     if not graceful and prompt_tokens == 0 and completion_tokens == 0:
                         retry_count += 1
                         logger.warning(
                             f"[{request_id}] Empty stream (attempt {retry_count}/{MAX_RETRIES})"
                         )
-                        if retry_count <= MAX_RETRIES:
+                        if _should_retry_empty() and retry_count <= MAX_RETRIES:
                             yield _SSE_KEEPALIVE
                             await asyncio.sleep(1)
                             continue  # retry the request
+                        elif not _should_retry_empty():
+                            # Retries disabled — return error immediately
+                            yield build_sse_error_frame(
+                                "Upstream returned empty response", "upstream_empty"
+                            )
+                            yield build_done_chunk(
+                                request_id_str, created, active_model,
+                                has_tool_calls, prompt_tokens, completion_tokens,
+                            )
+                            break
                         else:
+                            # Max retries exhausted with retry enabled
                             yield build_sse_error_frame(
                                 "Upstream returned empty response", "upstream_empty"
                             )
