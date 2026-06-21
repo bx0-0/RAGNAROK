@@ -3,7 +3,6 @@
 import os
 import time
 import asyncio
-import traceback
 
 import orjson
 import httpx
@@ -19,74 +18,8 @@ from src.sse import (
     make_sse_frames,
     build_done_chunk,
 )
-from src.config import OLLAMA_STREAM_LOG
+from src.config import KEEP_ALIVE, OLLAMA_BASE_URL
 from src.errors import build_sse_error_frame
-
-_ollama_stream_fh = None
-
-
-def _open_ollama_stream_log():
-    global _ollama_stream_fh
-    try:
-        _ollama_stream_fh = open(OLLAMA_STREAM_LOG, "a", buffering=1)
-    except Exception as e:
-        logger.warning(f"Could not open {OLLAMA_STREAM_LOG}: {e}")
-
-
-def _close_ollama_stream_log():
-    global _ollama_stream_fh
-    if _ollama_stream_fh:
-        try:
-            _ollama_stream_fh.flush()
-            _ollama_stream_fh.close()
-        except Exception:
-            pass
-        _ollama_stream_fh = None
-
-
-def _log_chunk(request_id, chunk_num, msg, done, prompt_eval, eval_count, done_reason, total_duration):
-    """Append a single chunk dump to the ollama-stream.log file."""
-    if _ollama_stream_fh is None:
-        return
-    try:
-        entry = {
-            "request_id": request_id,
-            "chunk_num": chunk_num,
-            "done": done,
-            "prompt_eval_count": prompt_eval,
-            "eval_count": eval_count,
-            "done_reason": done_reason,
-            "total_duration_ms": round(total_duration / 1_000_000, 2) if total_duration else None,
-        }
-        if msg:
-            entry["content"] = msg.content if hasattr(msg, "content") else None
-            entry["thinking"] = getattr(msg, "thinking", None)
-            entry["tool_calls"] = [
-                {
-                    "id": tc.id if hasattr(tc, "id") else None,
-                    "name": tc.function.name if hasattr(tc, "function") else None,
-                    "args_preview": (
-                        str(tc.function.arguments)[:200] if hasattr(tc, "function") else None
-                    ),
-                }
-                for tc in (msg.tool_calls or [])
-            ]
-        _ollama_stream_fh.write(orjson.dumps(entry).decode() + "\n")
-        _ollama_stream_fh.flush()
-    except Exception:
-        pass
-
-
-def _log_stream_event(request_id, event, **kwargs):
-    """Log a stream lifecycle event (retry, error, finally, etc.) to the file."""
-    if _ollama_stream_fh is None:
-        return
-    try:
-        entry = {"request_id": request_id, "event": event, **kwargs}
-        _ollama_stream_fh.write(orjson.dumps(entry).decode() + "\n")
-        _ollama_stream_fh.flush()
-    except Exception:
-        pass
 
 # These are read from server at runtime; we avoid importing them to prevent circular deps.
 # They're passed via config dict instead.
@@ -102,9 +35,6 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                            request_id_str, created, active_model, max_stream_s,
                            ollama_chat_url, sfx, efx):
     """Core async generator that yields SSE frames from Ollama's streaming API."""
-
-    _open_ollama_stream_log()
-    _log_stream_event(request_id, "START", model=active_model, max_stream_s=max_stream_s)
 
     first_chunk = True
     has_tool_calls = False
@@ -226,15 +156,6 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         return
 
                     chunks_captured += 1
-                    msg = chunk.message
-                    _log_chunk(request_id, chunks_captured, msg, chunk.done,
-                              chunk.prompt_eval_count, chunk.eval_count,
-                              chunk.done_reason, chunk.total_duration)
-                    _c = (msg.content or '')[:30]
-                    _t = (getattr(msg, 'thinking', '') or '')[:20]
-                    raw_preview = f"content={repr(_c)} thinking={repr(_t)} done={chunk.done}"
-                    logger.info(f"[{request_id}] CHUNK#{chunks_captured}: {raw_preview}")
-                    logger.info(f"[{request_id}] CHUNK#{chunks_captured}: {raw_preview}")
 
                     msg = chunk.message
                     if msg is None:
@@ -281,12 +202,6 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                                 else:
                                     tc_args_json = orjson.dumps(tc_args).decode() if tc_args else "{}"
                             is_write_tool = tc_name == "write"
-                            args_len = len(tc_args_json)
-                            logger.info(
-                                f"[{request_id}] Tool [{tc_name}] args_len={args_len}"
-                            )
-                            if is_write_tool:
-                                logger.info(f"[{request_id}] WRITE args preview: {tc_args_json[:500]}")
                             formatted.append({
                                 "index": tool_call_index,
                                 "id": getattr(tc, "id", None) or f"call_{_fast_id()}",
@@ -328,11 +243,9 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         prompt_tokens = chunk.prompt_eval_count or 0
                         completion_tokens = chunk.eval_count or 0
                         graceful = True
-                        logger.info(
-                            f"[{request_id}] DONE chunk | prompt_eval_count={chunk.prompt_eval_count} "
-                            f"eval_count={chunk.eval_count} done_reason={chunk.done_reason} "
-                            f"total_duration={chunk.total_duration} load_duration={chunk.load_duration} "
-                            f"chunks_received={chunks_captured}"
+                        logger.debug(
+                            f"[{request_id}] DONE | P={chunk.prompt_eval_count} C={chunk.eval_count} "
+                            f"reason={chunk.done_reason} chunks={chunks_captured}"
                         )
                         # Flush remaining tokens before done chunk
                         frame = _flush_batch()
@@ -346,9 +259,6 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         break
 
             except asyncio.CancelledError:
-                raise  # will be caught by outer handler                        break
-
-            except asyncio.CancelledError:
                 raise  # will be caught by outer handler
             except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout) as e:
                 died_mid_stream = True
@@ -356,16 +266,8 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 break
             except Exception as e:
                 logger.error(f"[{request_id}] Stream loop error: {e}")
-                logger.error(f"[{request_id}] Trace: {traceback.format_exc()[:500]}")
                 break
             else:
-                _log_stream_event(
-                    request_id, "EXIT_NO_DONE", graceful=graceful, chunks=chunks_captured,
-                    died_mid=died_mid_stream, P=prompt_tokens, C=completion_tokens,
-                    has_tool_calls=has_tool_calls,
-                    content_buf=len("".join(batch_content)),
-                    thinking_buf=len("".join(batch_thinking)),
-                )
                 # ── Stream exited normally WITHOUT chunk.done ──
                 logger.warning(
                     f"[{request_id}] Stream loop exited | graceful={graceful} "
@@ -397,16 +299,6 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     except asyncio.CancelledError:
                         pass
 
-                _log_stream_event(
-                    request_id, "FINALLY", graceful=graceful, chunks=chunks_captured,
-                    died_mid=died_mid_stream, P=prompt_tokens, C=completion_tokens,
-                    has_tool_calls=has_tool_calls,
-                )
-                logger.info(
-                    f"[{request_id}] FINALLY | graceful={graceful} chunks={chunks_captured} "
-                    f"died_mid={died_mid_stream} P={prompt_tokens} C={completion_tokens} "
-                    f"has_tool_calls={has_tool_calls}"
-                )
                 # Flush remaining thinking/content on ANY exit (cancelled, timeout, or normal)
                 frame = _flush_batch()
                 if frame:
@@ -435,10 +327,6 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                             f"[{request_id}] Empty stream (attempt {retry_count}/{MAX_RETRIES})"
                         )
                         if _should_retry_empty() and retry_count <= MAX_RETRIES:
-                            _log_stream_event(
-                                request_id, "RETRY", attempt=retry_count, chunks=chunks_captured,
-                                died_mid=died_mid_stream, P=prompt_tokens, C=completion_tokens,
-                            )
                             yield _SSE_KEEPALIVE
                             await asyncio.sleep(1)
                             continue  # retry the request
@@ -453,10 +341,6 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         has_tool_calls, prompt_tokens, completion_tokens,
                     )
 
-            _log_stream_event(
-                request_id, "DONE_SUCCESS", retry=retry_count, chunks=chunks_captured,
-                P=prompt_tokens, C=completion_tokens,
-            )
             yield _SSE_DONE
             break  # success — exit retry loop
 
@@ -475,7 +359,6 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             return
         except Exception as e:
             logger.error(f"[{request_id}] STREAM CRASH: {e}")
-            logger.error(f"[{request_id}] Trace: {traceback.format_exc()[:500]}")
             yield build_sse_error_frame("Internal server error", "server_error")
             yield build_done_chunk(
                 request_id_str, created, active_model,
@@ -484,7 +367,6 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             yield _SSE_DONE
             return
         finally:
-            _log_stream_event(request_id, "OUTER_FINALLY_PRE", P=prompt_tokens, C=completion_tokens)
             if not released:
                 released = True
                 state.semaphore.release()
@@ -498,10 +380,8 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         f"[{request_id}] Cancelled before logging | {elapsed}s "
                         f"| P:{prompt_tokens} C:{completion_tokens}"
                     )
-            _log_stream_event(request_id, "END", P=prompt_tokens, C=completion_tokens)
-            _close_ollama_stream_log()
 
-
+            
 def handle_stream(state, request_id, ollama_payload, start_time, active_model,
                   max_stream_seconds: int, ollama_chat_url: str):
     """Entry point called from server route handler."""
