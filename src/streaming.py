@@ -119,14 +119,13 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         return
 
                     chunks_captured += 1
-                    if chunks_captured <= 3 or (chunks_captured % 50 == 0):
-                        msg = chunk.message
-                        raw_preview = (
-                            f"content={repr((msg.content or '')[:30])} "
-                            f"thinking={repr((getattr(msg, 'thinking', '') or '')[:20])} "
-                            f"done={chunk.done}"
-                        )
-                        logger.info(f"[{request_id}] CHUNK#{chunks_captured}: {raw_preview}")
+                    msg = chunk.message
+                    raw_preview = (
+                        f"content={repr((msg.content or '')[:30])} "
+                        f"thinking={repr((getattr(msg, 'thinking', '') or '')[:20])} "
+                        f"done={chunk.done}"
+                    )
+                    logger.info(f"[{request_id}] CHUNK#{chunks_captured}: {raw_preview}")
 
                     msg = chunk.message
                     if msg is None:
@@ -243,8 +242,13 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 break
             else:
                 # ── Stream exited normally WITHOUT chunk.done ──
-                # Ollama closes the connection after tool calls (e.g. large file write)
-                # without sending a proper "done" signal.
+                logger.warning(
+                    f"[{request_id}] Stream loop exited | graceful={graceful} "
+                    f"chunks_captured={chunks_captured} died_mid_stream={died_mid_stream} "
+                    f"content_buf={len(''.join(batch_content))} thinking_buf={len(''.join(batch_thinking))} "
+                    f"has_tool_calls={has_tool_calls} prompt_tokens={prompt_tokens} "
+                    f"completion_tokens={completion_tokens}"
+                )
                 if not graceful and chunks_captured > 0:
                     logger.warning(
                         f"[{request_id}] Stream ended without finish_reason "
@@ -261,6 +265,11 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     )
                     graceful = True
             finally:
+                logger.info(
+                    f"[{request_id}] FINALLY | graceful={graceful} chunks={chunks_captured} "
+                    f"died_mid={died_mid_stream} P={prompt_tokens} C={completion_tokens} "
+                    f"has_tool_calls={has_tool_calls}"
+                )
                 # ── Zero-token detection: retry or graceful exit ──
                 if not graceful and prompt_tokens == 0 and completion_tokens == 0:
                     if died_mid_stream:
