@@ -169,8 +169,35 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 return sfx + orjson.dumps(delta) + efx
 
             try:
-                # ── Stream using ollama AsyncClient.chat(stream=True) ──
-                async for chunk in await state.http_client.chat(**chat_kwargs):
+                # ── Stream using asyncio.wait() with keepalive during Ollama gaps ──.chat(stream=True) with per-chunk timeout ──
+                # Use wait() to detect long gaps between chunks and send keepalive pings
+                # This prevents the client from timing out during Ollama generation pauses
+                _ai = state.http_client.chat(**chat_kwargs).__aiter__()
+                CHUNK_TIMEOUT = 10  # seconds — send keepalive if no chunk arrives in this time
+
+                # ── Stream using asyncio.wait() so we can inject keepalives during Ollama gaps ──
+                _ai = state.http_client.chat(**chat_kwargs).__aiter__()
+                CHUNK_TIMEOUT = 10  # send keepalive if no chunk arrives in this time
+
+                while True:
+                    # Wait for next chunk with a timeout so we can detect long gaps
+                    done, _pending = await asyncio.wait(
+                        [_ai.__anext__()],
+                        timeout=CHUNK_TIMEOUT,
+                    )
+                    if not done:
+                        # No chunk arrived within CHUNK_TIMEOUT seconds — send keepalive
+                        logger.info(f"[{request_id}] Keepalive ping (Ollama gap > {CHUNK_TIMEOUT}s)")
+                        yield _SSE_KEEPALIVE
+                        continue
+
+                    # Got a chunk
+                    try:
+                        chunk = done.pop().result()
+                    except StopAsyncIteration:
+                        # No more chunks from Ollama
+                        break
+
                     # ── Hard Timeout ──
                     stream_elapsed = time.monotonic() - start_time
                     if stream_elapsed > max_stream_s:
@@ -193,11 +220,10 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     _log_chunk(request_id, chunks_captured, msg, chunk.done,
                               chunk.prompt_eval_count, chunk.eval_count,
                               chunk.done_reason, chunk.total_duration)
-                    raw_preview = (
-                        f"content={repr((msg.content or '')[:30])} "
-                        f"thinking={repr((getattr(msg, 'thinking', '') or '')[:20])} "
-                        f"done={chunk.done}"
-                    )
+                    _c = (msg.content or '')[:30]
+                    _t = (getattr(msg, 'thinking', '') or '')[:20]
+                    raw_preview = f"content={repr(_c)} thinking={repr(_t)} done={chunk.done}"
+                    logger.info(f"[{request_id}] CHUNK#{chunks_captured}: {raw_preview}")
                     logger.info(f"[{request_id}] CHUNK#{chunks_captured}: {raw_preview}")
 
                     msg = chunk.message
@@ -244,13 +270,13 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                                     tc_args_json = tc_args
                                 else:
                                     tc_args_json = orjson.dumps(tc_args).decode() if tc_args else "{}"
-                            is_write_tool = tc_name == 'write'
+                            is_write_tool = tc_name == "write"
                             args_len = len(tc_args_json)
                             logger.info(
-                                f'[{request_id}] Tool [{tc_name}] args_len={args_len}'
+                                f"[{request_id}] Tool [{tc_name}] args_len={args_len}"
                             )
                             if is_write_tool:
-                                logger.info(f'[{request_id}] WRITE args preview: {tc_args_json[:500]}')
+                                logger.info(f"[{request_id}] WRITE args preview: {tc_args_json[:500]}")
                             formatted.append({
                                 "index": tool_call_index,
                                 "id": getattr(tc, "id", None) or f"call_{_fast_id()}",
@@ -308,6 +334,9 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                             has_tool_calls, prompt_tokens, completion_tokens,
                         )
                         break
+
+            except asyncio.CancelledError:
+                raise  # will be caught by outer handler                        break
 
             except asyncio.CancelledError:
                 raise  # will be caught by outer handler
