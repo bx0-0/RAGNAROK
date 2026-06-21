@@ -26,6 +26,9 @@ OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
 REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")
 
+# ─── Ollama stream debug log ───
+OLLAMA_STREAM_LOG = os.environ.get("OLLAMA_STREAM_LOG", "/tmp/ollama-stream.log")
+
 # ─── HTTP timeouts ───
 MAX_STREAM_SECONDS = int(os.environ.get("MAX_STREAM_SECONDS", "1800"))  # 30 min
 HTTP_CONNECT_TIMEOUT = float(os.environ.get("HTTP_CONNECT_TIMEOUT", "60.0"))
