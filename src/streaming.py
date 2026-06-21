@@ -169,28 +169,44 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 return sfx + orjson.dumps(delta) + efx
 
             try:
-                # ── Stream using asyncio.wait() so we can inject keepalives during Ollama gaps ──
-                _ai = (await state.http_client.chat(**chat_kwargs)).__aiter__()
+                # ── Queue-based consumer — single task drives the async generator ──
+                chunk_queue: asyncio.Queue = asyncio.Queue()
+
+                async def _queue_pusher():
+                    """Drive the async generator and push chunks into queue."""
+                    try:
+                        async for chunk in state.http_client.chat(**chat_kwargs):
+                            await chunk_queue.put(chunk)
+                        # Signal end-of-stream
+                        await chunk_queue.put(StopAsyncIteration)
+                    except StopAsyncIteration:
+                        await chunk_queue.put(StopAsyncIteration)
+                    except Exception as e:
+                        await chunk_queue.put(e)
+
                 CHUNK_TIMEOUT = 10  # send keepalive if no chunk arrives in 10s
+                _pusher = asyncio.create_task(_queue_pusher())
 
                 while True:
                     # Wait for next chunk with a timeout so we can detect long gaps
-                    done, _pending = await asyncio.wait(
-                        [asyncio.create_task(_ai.__anext__())],
-                        timeout=CHUNK_TIMEOUT,
-                    )
-                    if not done:
+                    try:
+                        chunk_or_sentinel = await asyncio.wait_for(
+                            chunk_queue.get(), timeout=CHUNK_TIMEOUT
+                        )
+                    except asyncio.TimeoutError:
                         # No chunk arrived within CHUNK_TIMEOUT seconds — send keepalive
                         logger.info(f"[{request_id}] Keepalive ping (Ollama gap > {CHUNK_TIMEOUT}s)")
                         yield _SSE_KEEPALIVE
                         continue
 
-                    # Got a chunk
-                    try:
-                        chunk = done.pop().result()
-                    except StopAsyncIteration:
-                        # No more chunks from Ollama
+                    # Handle queue errors
+                    if isinstance(chunk_or_sentinel, Exception):
+                        raise chunk_or_sentinel
+                    if chunk_or_sentinel is StopAsyncIteration:
+                        # No more chunks from Ollama — stream ended
                         break
+
+                    chunk = chunk_or_sentinel
 
                     # ── Hard Timeout ──
                     stream_elapsed = time.monotonic() - start_time
@@ -373,6 +389,14 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         "Stream ended without finish_reason", "incomplete_stream"
                     )
             finally:
+                # Cancel the pusher task if it's still running (e.g. on break/retry)
+                if _pusher and not _pusher.done():
+                    _pusher.cancel()
+                    try:
+                        await _pusher
+                    except asyncio.CancelledError:
+                        pass
+
                 _log_stream_event(
                     request_id, "FINALLY", graceful=graceful, chunks=chunks_captured,
                     died_mid=died_mid_stream, P=prompt_tokens, C=completion_tokens,
