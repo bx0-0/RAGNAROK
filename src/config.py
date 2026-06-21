@@ -32,7 +32,7 @@ OLLAMA_STREAM_LOG = os.environ.get("OLLAMA_STREAM_LOG", "/tmp/ollama-stream.log"
 # ─── HTTP timeouts ───
 MAX_STREAM_SECONDS = int(os.environ.get("MAX_STREAM_SECONDS", "1800"))  # 30 min
 HTTP_CONNECT_TIMEOUT = float(os.environ.get("HTTP_CONNECT_TIMEOUT", "60.0"))
-HTTP_READ_TIMEOUT = float(os.environ.get("HTTP_READ_TIMEOUT", "900.0"))
+HTTP_READ_TIMEOUT = float(os.environ.get("HTTP_READ_TIMEOUT", "7200.0"))  # 2h for large tool-call outputs
 HTTP_WRITE_TIMEOUT = float(os.environ.get("HTTP_WRITE_TIMEOUT", "60.0"))
 HTTP_POOL_TIMEOUT = float(os.environ.get("HTTP_POOL_TIMEOUT", "900.0"))
 

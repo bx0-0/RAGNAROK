@@ -171,7 +171,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             try:
                 # ── Stream using asyncio.wait() so we can inject keepalives during Ollama gaps ──
                 _ai = (await state.http_client.chat(**chat_kwargs)).__aiter__()
-                CHUNK_TIMEOUT = 10  # send keepalive if no chunk arrives in this time
+                CHUNK_TIMEOUT = 60  # send keepalive if no chunk arrives in 60s
 
                 while True:
                     # Wait for next chunk with a timeout so we can detect long gaps
