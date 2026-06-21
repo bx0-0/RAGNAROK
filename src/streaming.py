@@ -176,7 +176,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 while True:
                     # Wait for next chunk with a timeout so we can detect long gaps
                     done, _pending = await asyncio.wait(
-                        [_ai.__anext__()],
+                        [asyncio.create_task(_ai.__anext__())],
                         timeout=CHUNK_TIMEOUT,
                     )
                     if not done:
