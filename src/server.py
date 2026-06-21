@@ -1,9 +1,7 @@
 """Slim app orchestrator — config, state, routes, lifespan, entry point."""
 
-import os
 import asyncio
 import contextlib
-import time
 
 import httpx
 import ollama
@@ -64,7 +62,7 @@ async def lifespan(app: FastAPI):
     )
     print(banner, flush=True)
     logger.info("FastAPI starting up...")
-    logger.info(f"Warming up model '{MODEL_NAME}' in background. ..")
+    logger.info(f"Warming up model '{MODEL_NAME}' in background.")
 
     yield
 
@@ -104,7 +102,3 @@ def run_server():
     )
 
 
-if __name__ == "__main__":
-    setup_logging(os.environ.get("DEBUG_MODE", "False").lower() in ("true", "1"))
-    logger.info(f"Starting server on :{PORT} default_model={MODEL_NAME} models={_MODEL_LIST}")
-    run_server()

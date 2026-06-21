@@ -5,11 +5,9 @@ import time
 import collections
 import logging
 
+from src.config import VERBOSE_LOG, REQUEST_LOG_FILE
+
 logger = logging.getLogger("gateway")
-
-VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
-REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")
-
 
 def setup_logging(debug: bool):
     level = logging.DEBUG if debug else logging.INFO

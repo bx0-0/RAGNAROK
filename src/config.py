@@ -26,9 +26,6 @@ OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
 REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")
 
-# ─── Ollama stream debug log ───
-OLLAMA_STREAM_LOG = os.environ.get("OLLAMA_STREAM_LOG", "/tmp/ollama-stream.log")
-
 # ─── HTTP timeouts ───
 MAX_STREAM_SECONDS = int(os.environ.get("MAX_STREAM_SECONDS", "1800"))  # 30 min
 HTTP_CONNECT_TIMEOUT = float(os.environ.get("HTTP_CONNECT_TIMEOUT", "60.0"))
@@ -44,13 +41,6 @@ MAX_QUEUE_SIZE = int(os.environ.get("MAX_QUEUE_SIZE", "256"))
 MAX_KEEPALIVE_PINGS = int(os.environ.get("MAX_KEEPALIVE_PINGS", "120"))
 
 # ─── Precomputed ollama options (never changes at runtime) ───
-_OLLAMA_OPTS_BASE = {
-    "num_ctx": NUM_CTX,
-    "num_batch": NUM_BATCH,
-    "flash_attn": FLASH_ATTN,
-    "num_gpu": NUM_GPU,
-}
-
 _OLLAMA_OPTS = {
     "num_ctx": NUM_CTX,
     "num_batch": NUM_BATCH,
