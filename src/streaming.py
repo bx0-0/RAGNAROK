@@ -355,6 +355,11 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     f"died_mid={died_mid_stream} P={prompt_tokens} C={completion_tokens} "
                     f"has_tool_calls={has_tool_calls}"
                 )
+                # Flush remaining thinking/content on ANY exit (cancelled, timeout, or normal)
+                frame = _flush_batch()
+                if frame:
+                    yield frame
+
                 # ── Zero-token detection: retry or graceful exit ──
                 if not graceful and prompt_tokens == 0 and completion_tokens == 0:
                     if died_mid_stream:
