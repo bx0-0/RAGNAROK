@@ -379,10 +379,10 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         )
                         if _should_retry_empty() and retry_count <= MAX_RETRIES:
                             _log_stream_event(
-                    request_id, "RETRY", attempt=retry_count, chunks=chunks_captured,
-                    died_mid=died_mid_stream, P=prompt_tokens, C=completion_tokens,
-                )
-                yield _SSE_KEEPALIVE
+                                request_id, "RETRY", attempt=retry_count, chunks=chunks_captured,
+                                died_mid=died_mid_stream, P=prompt_tokens, C=completion_tokens,
+                            )
+                            yield _SSE_KEEPALIVE
                             await asyncio.sleep(1)
                             continue  # retry the request
                         # Either retries disabled or exhausted — yield valid empty completion
