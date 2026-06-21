@@ -128,7 +128,7 @@ pkill -f "src.server" 2>/dev/null || true
 fuser -k "${PORT}/tcp" 2>/dev/null || true
 sleep 1
 
-python3 -m src.server > "${SERVER_LOG_FILE}" 2>&1 &
+python3 -m src > "${SERVER_LOG_FILE}" 2>&1 &
 SERVER_PID=$!
 echo -e "  ${DIM}PID: ${YELLOW}${SERVER_PID}${NC}"
 
