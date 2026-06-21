@@ -1,6 +1,8 @@
 import os
 import orjson
 
+from fastapi import Request
+
 from src.logging import logger
 
 
@@ -158,3 +160,20 @@ def format_tool_calls_openai(ollama_tcs):
         except Exception as e:
             logger.error(f"Tool format error: {e}")
     return openai_tcs
+
+
+# ─── Chunked body reader (avoids buffering huge prompts in RAM) ───
+async def _read_body(request: Request, max_size_mb: int = 50) -> bytes:
+    """Read request body without loading >max_size_mb all at once.
+    Returns raw bytes. Raises ValueError if Content-Length exceeds limit."""
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > max_size_mb * 1024 * 1024:
+        raise ValueError(f"Body too large: {int(content_length)} bytes")
+    # Read in 64KB chunks — FastAPI/Starlette already streams internally
+    chunks = []
+    async for chunk in request.stream():
+        chunks.append(chunk)
+        total = sum(len(c) for c in chunks)
+        if total > max_size_mb * 1024 * 1024:
+            raise ValueError(f"Body exceeds {max_size_mb}MB limit")
+    return b"".join(chunks)
