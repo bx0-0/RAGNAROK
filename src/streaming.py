@@ -220,7 +220,6 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                             f"total_duration={chunk.total_duration} load_duration={chunk.load_duration} "
                             f"chunks_received={chunks_captured}"
                         )
-
                         # Flush remaining tokens before done chunk
                         frame = _flush_batch()
                         if frame:
@@ -242,6 +241,25 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 logger.error(f"[{request_id}] Stream loop error: {e}")
                 logger.error(f"[{request_id}] Trace: {traceback.format_exc()[:500]}")
                 break
+            else:
+                # ── Stream exited normally WITHOUT chunk.done ──
+                # Ollama closes the connection after tool calls (e.g. large file write)
+                # without sending a proper "done" signal.
+                if not graceful and chunks_captured > 0:
+                    logger.warning(
+                        f"[{request_id}] Stream ended without finish_reason "
+                        f"after {chunks_captured} chunks — yielding finish chunk"
+                    )
+                    # Flush any remaining buffered tokens
+                    frame = _flush_batch()
+                    if frame:
+                        yield frame
+                    # Send a proper done chunk so client gets finish_reason
+                    yield build_done_chunk(
+                        request_id_str, created, active_model,
+                        has_tool_calls, prompt_tokens, completion_tokens,
+                    )
+                    graceful = True
             finally:
                 # ── Zero-token detection: retry or graceful exit ──
                 if not graceful and prompt_tokens == 0 and completion_tokens == 0:
