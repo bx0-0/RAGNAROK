@@ -338,18 +338,17 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 if not graceful and chunks_captured > 0:
                     logger.warning(
                         f"[{request_id}] Stream ended without finish_reason "
-                        f"after {chunks_captured} chunks — yielding finish chunk"
+                        f"after {chunks_captured} chunks — yielding error to trigger retry"
                     )
-                    # Flush any remaining buffered tokens
+                    # Flush any remaining buffered tokens so client has context
                     frame = _flush_batch()
                     if frame:
                         yield frame
-                    # Send a proper done chunk so client gets finish_reason
-                    yield build_done_chunk(
-                        request_id_str, created, active_model,
-                        has_tool_calls, prompt_tokens, completion_tokens,
+                    # DO NOT send a fake done chunk — Pi agent will silently accept it
+                    # as valid. Instead send an error so its retry logic kicks in.
+                    yield build_sse_error_frame(
+                        "Stream ended without finish_reason", "incomplete_stream"
                     )
-                    graceful = True
             finally:
                 _log_stream_event(
                     request_id, "FINALLY", graceful=graceful, chunks=chunks_captured,
