@@ -244,7 +244,13 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                                     tc_args_json = tc_args
                                 else:
                                     tc_args_json = orjson.dumps(tc_args).decode() if tc_args else "{}"
-                            logger.info(f"[{request_id}] 🔧 Tool Call: {tc_name}")
+                            is_write_tool = tc_name == 'write'
+                            args_len = len(tc_args_json)
+                            logger.info(
+                                f'[{request_id}] Tool [{tc_name}] args_len={args_len}'
+                            )
+                            if is_write_tool:
+                                logger.info(f'[{request_id}] WRITE args preview: {tc_args_json[:500]}')
                             formatted.append({
                                 "index": tool_call_index,
                                 "id": getattr(tc, "id", None) or f"call_{_fast_id()}",
