@@ -175,7 +175,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 async def _queue_pusher():
                     """Drive the async generator and push chunks into queue."""
                     try:
-                        async for chunk in state.http_client.chat(**chat_kwargs):
+                        async for chunk in (await state.http_client.chat(**chat_kwargs)):
                             await chunk_queue.put(chunk)
                         # Signal end-of-stream
                         await chunk_queue.put(StopAsyncIteration)
@@ -184,7 +184,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     except Exception as e:
                         await chunk_queue.put(e)
 
-                CHUNK_TIMEOUT = 10  # send keepalive if no chunk arrives in 10s
+                CHUNK_TIMEOUT = 60  # send keepalive if no chunk arrives in 60s
                 _pusher = asyncio.create_task(_queue_pusher())
 
                 while True:
