@@ -47,7 +47,7 @@ wait_for_tunnel_url() {
         fi
         sleep 2
         elapsed=$((elapsed + 2))
-        printf "\033[0;36m.\033[0m"
+        printf "\033[0;36m.\033[0m" >&2
     done
     return 1
 }
@@ -63,7 +63,7 @@ verify_tunnel_endpoint() {
             return 0
         fi
         sleep 2
-        printf "\033[0;36m.\033[0m"
+        printf "\033[0;36m.\033[0m" >&2
     done
     return 1
 }
@@ -87,22 +87,22 @@ retry_tunnel_full() {
     done
 
     if [ -z "$new_url" ]; then
-        echo ""
-        echo "  ❌ Could not get new URL on retry"
-        cat "${TUNNEL_LOG_FILE}" 2>/dev/null | tail -10
+        echo "" >&2
+        echo "  ❌ Could not get new URL on retry" >&2
+        cat "${TUNNEL_LOG_FILE}" 2>/dev/null | tail -10 >&2
         exit 1
     fi
 
     write_url_file "$new_url"
-    echo -ne "  ├─ Testing retry tunnel"
+    echo -ne "  ├─ Testing retry tunnel" >&2
     if ! verify_tunnel_endpoint "$new_url"; then
-        echo ""
-        echo "  ❌ Retry also failed. Tunnel may be blocked."
-        cat "${TUNNEL_LOG_FILE}" 2>/dev/null | tail -10
+        echo "" >&2
+        echo "  ❌ Retry also failed. Tunnel may be blocked." >&2
+        cat "${TUNNEL_LOG_FILE}" 2>/dev/null | tail -10 >&2
         kill $new_pid 2>/dev/null || true
         exit 1
     fi
-    echo " ✅"
+    echo " ✅" >&2
 
     echo "$new_pid:$new_url"
 }

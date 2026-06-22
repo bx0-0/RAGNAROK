@@ -9,6 +9,54 @@
 
 source "$(dirname "$(readlink -f "$0")")/tunnel_url_extract.sh"
 
+# ── Print the RAGNAROK online banner ──
+print_ragnarok_banner() {
+    local url="$1"
+    local model_names="$2"
+    local port="${PORT:-8000}"
+    local first_model=$(echo "$model_names" | awk '{print $1}')
+
+    # Convert HF names to display-friendly short aliases
+    local display_models=""
+    for M in ${MODEL_NAME:-qwen3:8b}; do
+        if [[ "$M" == hf.co/* ]]; then
+            SHORT=$(echo "$M" | sed 's|hf\.co/[^/]*/||')
+            display_models="$display_models $SHORT"
+        else
+            display_models="$display_models $M"
+        fi
+    done
+
+    local sep
+    sep=$(printf '=%.0s' $(seq 1 56))
+
+    echo ""
+    echo -e "\033[0;35m\033[1m  ${sep}\033[0m"
+    echo -e "\033[0;32m\033[1m        🔥  RAGNAROK IS ONLINE  🔥         \033[0m"
+    echo -e "\033[0;35m\033[1m  ${sep}\033[0m"
+    echo -e "\033[0;36m\033[1m  Endpoint\033[2m  \033[1;33m${url}/v1\033[0m"
+    echo -e "\033[0;36m\033[1m  Models\033[2m    \033[0;32m${display_models}\033[0m"
+    echo -e "\033[0;36m\033[1m  Default\033[2m   \033[0;32m${first_model:-qwen3:8b}\033[0m"
+    echo -e "\033[0;36m\033[1m  Port\033[2m      \033[1;37m${port}\033[0m"
+
+    # Hint if any HF model was used
+    local hf_found=0
+    for M in $MODEL_NAME; do
+        if [[ "$M" == hf.co/* ]]; then
+            hf_found=1
+            break
+        fi
+    done
+    if [ "$hf_found" -eq 1 ]; then
+        echo ""
+        echo -e "  \033[1;33mℹ️  HF models use short aliases. Use the 'Models' name above, not hf.co/...\033[0m"
+    fi
+    echo -e "\033[0;35m\033[1m  ${sep}\033[0m"
+    echo -e "\033[2m  curl \033[1;33m${url}/v1/models\033[2m\033[0m"
+    echo -e "\033[0;35m\033[1m  ${sep}\033[0m"
+    echo ""
+}
+
 run_tunnel_watchdog() {
     local tunnel_pid="$1"
     local port="${PORT:-8000}"
@@ -65,7 +113,7 @@ run_tunnel_watchdog() {
 
                 if [ -n "$new_url" ]; then
                     write_url_file "$new_url"
-                    echo "  ✅ Tunnel restarted — NEW URL: ${new_url}/v1"
+                    print_ragnarok_banner "$new_url"
                 else
                     echo "  ✅ Tunnel restarted (URL extraction failed, check logs)"
                 fi
