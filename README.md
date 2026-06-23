@@ -20,7 +20,7 @@
 
 ---
 
-## <img src="assets/animal.png" width="50" align="middle">&nbsp;Overview
+## <img src="assets/animal.png" width="60" align="middle"> Overview
 
 1. Runs **Ollama** inside Kaggle / Colab notebooks (free GPUs)
 2. Wraps Ollama's API with an **OpenAI-compatible** endpoint
@@ -31,7 +31,7 @@ Works with: **Codex · OpenCode · Cursor · VSCode AI extensions · Pi Agent ·
 
 ---
 
-## <img src="assets/fire.png" width="50" align="middle">&nbsp;Quick Start (Kaggle / Colab)
+## <img src="assets/fire.png" width="50" > Quick Start (Kaggle / Colab)
 
 Run these commands directly in a notebook cell:
 
@@ -151,7 +151,7 @@ PORT=8000
 
 ---
 
-## <img src="assets/search.png" width="50" align="middle">&nbsp;Model Sources
+## <img src="assets/search.png" width="80" align="middle">&nbsp;Model Sources
 
 ### 1. Ollama Library Models
 
@@ -175,7 +175,7 @@ Browse [bartowski GGUF repos](https://huggingface.co/bartowski) for heavily opti
 
 ---
 
-## <img src="assets/written.png" width="50" align="middle">&nbsp;Examples
+## <img src="assets/written.png" width="50"> Examples
 
 ### OpenAI Python SDK
 
@@ -258,7 +258,7 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
 
 ---
 
-## <img src="assets/data.png" width="50" align="middle">&nbsp;Architecture
+## <img src="assets/data.png" width="50"> Architecture
 
 ```
 Client (OpenAI SDK / Pi Agent / curl)
