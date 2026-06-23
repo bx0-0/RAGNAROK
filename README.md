@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/RAGNAROK.png" alt="RAGNAROK" width="350">
+  <img src="assets/RAGNAROK.png" alt="RAGNAROK" width="300">
 </p>
 
 <h1 align="center">🐉 RAGNAROK — GPU Model Gateway</h1>
