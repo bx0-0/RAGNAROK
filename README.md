@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">
-  <img src="assets/dragon.png" width="32" align="center"> RAGNAROK — GPU Model Gateway
+  <img src="assets/dragon.png" width="50" align="center"> RAGNAROK — GPU Model Gateway
 </h1>
 <p align="center">
   Run powerful open-source LLMs on <strong>free Kaggle / Colab GPUs</strong> with a public OpenAI-compatible API.
