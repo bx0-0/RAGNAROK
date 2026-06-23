@@ -61,6 +61,8 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
     # ── Immediate ping so client doesn't timeout while we wait for Ollama ──
     yield _SSE_KEEPALIVE
 
+    pusher_task = None  # track for cancellation on disconnect
+
     while retry_count <= MAX_RETRIES:
         # ── Check client disconnected before retry ──
         try:
@@ -104,18 +106,29 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
 
                 async def _queue_pusher():
                     """Drive the async generator and push chunks into queue."""
+                    chat_stream = None
                     try:
-                        async for chunk in (await state.http_client.chat(**chat_kwargs)):
+                        chat_stream = await state.http_client.chat(**chat_kwargs)
+                        async for chunk in chat_stream:
                             await chunk_queue.put(chunk)
                         # Signal end-of-stream
                         await chunk_queue.put(StopAsyncIteration)
                     except StopAsyncIteration:
                         await chunk_queue.put(StopAsyncIteration)
+                    except asyncio.CancelledError:
+                        # Closing the HTTP stream aborts Ollama generation → frees GPU immediately
+                        if chat_stream is not None:
+                            try:
+                                await chat_stream.aclose()
+                            except Exception:
+                                pass
+                        raise
                     except Exception as e:
                         await chunk_queue.put(e)
 
                 CHUNK_TIMEOUT = 60  # send keepalive if no chunk arrives in 60s
                 _pusher = asyncio.create_task(_queue_pusher())
+                pusher_task = _pusher  # save ref for disconnect handling
 
                 while True:
                     # Wait for next chunk with a timeout so we can detect long gaps
@@ -259,7 +272,15 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         break
 
             except asyncio.CancelledError:
-                raise  # will be caught by outer handler
+                # Client disconnected — abort Ollama generation immediately to free GPU
+                logger.warning(f"[{request_id}] Client disconnected, aborting generation")
+                if pusher_task and not pusher_task.done():
+                    pusher_task.cancel()
+                    try:
+                        await pusher_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                raise  # propagate to outer handler
             except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout) as e:
                 died_mid_stream = True
                 logger.error(f"[{request_id}] Ollama connection error: {e}")
@@ -292,10 +313,10 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     )
             finally:
                 # Cancel the pusher task if it's still running (e.g. on break/retry)
-                if _pusher and not _pusher.done():
-                    _pusher.cancel()
+                if pusher_task and not pusher_task.done():
+                    pusher_task.cancel()
                     try:
-                        await _pusher
+                        await pusher_task
                     except asyncio.CancelledError:
                         pass
 
