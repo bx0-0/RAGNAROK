@@ -10,20 +10,20 @@ import asyncio
 import pytest
 import httpx
 
-BASE = "https://actions-supplied-treo-listprice.trycloudflare.com/v1"
+BASE = "https://constraint-viewing-strengths-bride.trycloudflare.com/v1"
 TIMEOUT_STREAM = 60   # streaming: can abort mid-way
 TIMEOUT_NONSTREAM = 180  # non-stream must wait for full response + blocked by semaphore behind other streams
 MODEL_NAME = "qwen3.5:27b-mtp-q4_K_M"  # only deployed model — no embedding support
 
 # Per-endpoint timeout tuples: (connect, read)
-SSE_TIMEOUT = httpx.Timeout(connect=10.0, read=TIMEOUT_STREAM)
-NONSTREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=TIMEOUT_NONSTREAM)
+SSE_TIMEOUT = httpx.Timeout(connect=10.0, read=TIMEOUT_STREAM, write=30.0, pool=10.0)
+NONSTREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=TIMEOUT_NONSTREAM, write=30.0, pool=10.0)
 
 
 @pytest.fixture(scope="module")
 def client():
     """Reusable HTTPX client for all live tests."""
-    return httpx.Client(base_url=BASE, timeout=TIMEOUT)
+    return httpx.Client(base_url=BASE, timeout=NONSTREAM_TIMEOUT)
 
 
 class TestHealth:
@@ -69,7 +69,7 @@ class TestChatCompletion:
         r = client.post("/chat/completions", json={
             "messages": [{"role": "user", "content": "Say only: HELLO"}],
             "stream": True,
-        }, timeout=TIMEOUT)
+        }, timeout=SSE_TIMEOUT)
         assert r.status_code == 200
 
         chunks = []
@@ -95,7 +95,7 @@ class TestChatCompletion:
         r = client.post("/chat/completions", json={
             "messages": [{"role": "user", "content": "Say only: YES"}],
             "stream": True,
-        }, timeout=TIMEOUT)
+        }, timeout=SSE_TIMEOUT)
         assert r.status_code == 200
 
         usage_found = False
@@ -225,7 +225,7 @@ class TestToolCalls:
                 }
             }],
             "stream": True,
-        }, timeout=TIMEOUT)
+        }, timeout=SSE_TIMEOUT)
         assert r.status_code == 200
 
         has_tool_call = False
