@@ -2,7 +2,9 @@
   <img src="assets/RAGNAROK.png" alt="RAGNAROK" width="370">
 </p>
 
-<h1 align="center">🐉 RAGNAROK — GPU Model Gateway</h1>
+<h1 align="center">
+  <img src="assets/dragon.png" width="32" align="center"> RAGNAROK — GPU Model Gateway
+</h1>
 <p align="center">
   Run powerful open-source LLMs on <strong>free Kaggle / Colab GPUs</strong> with a public OpenAI-compatible API.
 </p>
@@ -18,7 +20,7 @@
 
 ---
 
-## ⚡ Overview
+## <img src="assets/fly.png" width="18"> Overview
 
 1. Runs **Ollama** inside Kaggle / Colab notebooks (free GPUs)
 2. Wraps Ollama's API with an **OpenAI-compatible** endpoint
@@ -29,7 +31,7 @@ Works with: **Codex · OpenCode · Cursor · VSCode AI extensions · Pi Agent ·
 
 ---
 
-## 🚀 Quick Start (Kaggle / Colab)
+## <img src="assets/dragon-fruit.png" width="18"> Quick Start (Kaggle / Colab)
 
 Run these commands directly in a notebook cell:
 
