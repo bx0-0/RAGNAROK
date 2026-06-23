@@ -20,7 +20,7 @@
 
 ---
 
-## <img src="assets/fly.png" width="18"> Overview
+## <img src="assets/fly.png" width="50"> Overview
 
 1. Runs **Ollama** inside Kaggle / Colab notebooks (free GPUs)
 2. Wraps Ollama's API with an **OpenAI-compatible** endpoint
@@ -31,7 +31,7 @@ Works with: **Codex · OpenCode · Cursor · VSCode AI extensions · Pi Agent ·
 
 ---
 
-## <img src="assets/dragon-fruit.png" width="18"> Quick Start (Kaggle / Colab)
+## <img src="assets/dragon-fruit.png" width="50"> Quick Start (Kaggle / Colab)
 
 Run these commands directly in a notebook cell:
 
