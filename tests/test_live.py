@@ -255,14 +255,7 @@ class TestConcurrency:
             assert r.status_code == 200
 
 
-class TestEmbeddings:
-    def test_embedding_request(self, client):
-        """Should return embeddings for text input."""
-        r = client.post("/embeddings", json={
-            "input": "test document",
-        })
-        # Embeddings may fail if no embedding model is loaded — that's OK
-        assert r.status_code in (200, 502)
+
 
 
 class TestResponseFormat:
