@@ -242,7 +242,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         should_flush = True
 
                     # ── Time-based flush (30ms on slow GPUs, 100ms was too much latency) ──
-                    if (time.monotonic() - batch_timer) > 0.03:
+                    if (time.monotonic() - batch_timer) > 0.05:
                         should_flush = True
 
                     if should_flush:
