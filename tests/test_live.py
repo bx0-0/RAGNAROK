@@ -10,7 +10,7 @@ import asyncio
 import pytest
 import httpx
 
-BASE = "https://constraint-viewing-strengths-bride.trycloudflare.com/v1"
+BASE = "https://hawaiian-greatly-ata-respondents.trycloudflare.com/v1"
 TIMEOUT_STREAM = 60   # streaming: can abort mid-way
 TIMEOUT_NONSTREAM = 180  # non-stream must wait for full response + blocked by semaphore behind other streams
 MODEL_NAME = "qwen3.5:27b-mtp-q4_K_M"  # only deployed model — no embedding support
