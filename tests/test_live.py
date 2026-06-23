@@ -10,7 +10,7 @@ import asyncio
 import pytest
 import httpx
 
-BASE = "https://alexander-office-contained-config.trycloudflare.com/v1"
+BASE = "https://begun-ist-away-ranking.trycloudflare.com/v1"
 TIMEOUT = 60  # generous for Kaggle GPUs
 
 

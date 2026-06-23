@@ -43,10 +43,27 @@ async def openai_embeddings(request: Request):
     payload = {"model": model, "input": input_data}
 
     try:
-        resp = await state.http_client.post(f"{OLLAMA_BASE_URL}/api/embed", json=payload)
+        resp = await state.http_client.embed(**payload)
         elapsed = round(time.monotonic() - start_time, 2)
-        await log_request(request_id, "POST", "/v1/embeddings", resp.status_code, elapsed, 0, 0, "EMBED")
-        return Response(status_code=resp.status_code, content=resp.content, media_type="application/json")
+        embeddings = resp.embeddings or []
+        # Determine embedding dimension from first vector
+        dim = len(embeddings[0]) if embeddings and isinstance(embeddings[0], (list, tuple)) else 0
+
+        data = [
+            {"object": "embedding", "index": i, "embedding": emb}
+            for i, emb in enumerate(embeddings)
+        ]
+        await log_request(request_id, "POST", "/v1/embeddings", 200, elapsed, len(input_data) * dim, dim, "EMBED")
+        return Response(
+            status_code=200,
+            content=orjson.dumps({
+                "object": "list",
+                "data": data,
+                "model": model,
+                "usage": {"prompt_tokens": len(input_data) * dim, "total_tokens": len(input_data) * dim},
+            }),
+            media_type="application/json",
+        )
     except Exception as e:
         elapsed = round(time.monotonic() - start_time, 2)
         await log_request(request_id, "POST", "/v1/embeddings", 502, elapsed, 0, 0, f"ERR:{str(e)[:40]}")

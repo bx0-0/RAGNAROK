@@ -130,8 +130,8 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
         }
         if "tools" in ollama_payload:
             chat_kwargs["tools"] = ollama_payload["tools"]
-        if "tool_choice" in ollama_payload:
-            chat_kwargs["tool_choice"] = ollama_payload["tool_choice"]
+        # NOTE: tool_choice not supported by ollama.AsyncClient.chat() in v0.4.x
+        # Model handles tool selection automatically when tools are present
 
         response = await state.http_client.chat(**chat_kwargs)
 
