@@ -2,11 +2,11 @@
 
 import os
 import time
+import json
 import asyncio
 
 import orjson
 import httpx
-import ollama
 
 from fastapi.responses import StreamingResponse
 
@@ -103,14 +103,43 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 chunk_queue: asyncio.Queue = asyncio.Queue()
 
                 async def _queue_pusher():
-                    """Drive the async generator and push chunks into queue."""
+                    """Drive Ollama's /api/chat via raw httpx and push parsed chunks."""
+                    body = json.dumps(chat_kwargs)
                     try:
-                        async for chunk in (await state.http_client.chat(**chat_kwargs)):
-                            await chunk_queue.put(chunk)
+                        limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+                        async with httpx.AsyncClient(limits=limits) as client:
+                            async with client.stream(
+                                "POST",
+                                f"{OLLAMA_BASE_URL}/api/chat",
+                                content=body,
+                                headers={"Content-Type": "application/json"},
+                                timeout=None,
+                            ) as resp:
+                                if resp.status_code != 200:
+                                    err_body = await resp.aread()
+                                    raise httpx.HTTPStatusError(
+                                        f"Ollama returned {resp.status_code}",
+                                        request=type("MockReq", (), {"url": "ollama/chat"})(),
+                                        response=httpx.Response(resp.status_code),
+                                    )
+                                async for line in resp.aiter_lines():
+                                    if not line or line == "data: {":
+                                        continue
+                                    if line.startswith("data: "):
+                                        data = line[6:]
+                                    else:
+                                        data = line
+                                    try:
+                                        parsed = json.loads(data)
+                                        await chunk_queue.put(parsed)
+                                    except json.JSONDecodeError:
+                                        pass
                         # Signal end-of-stream
                         await chunk_queue.put(StopAsyncIteration)
                     except StopAsyncIteration:
                         await chunk_queue.put(StopAsyncIteration)
+                    except httpx.HTTPStatusError as e:
+                        await chunk_queue.put(e)
                     except Exception as e:
                         await chunk_queue.put(e)
 
@@ -157,13 +186,12 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
 
                     chunks_captured += 1
 
-                    msg = chunk.message
-                    if msg is None:
-                        # Empty final chunk — done
+                    msg = chunk.get("message") or {}
+                    if not chunk:  # empty final chunk
                         continue
 
                     # ── Extract content ──
-                    content = msg.content or ""
+                    content = msg.get("content") or ""
                     if isinstance(content, list):
                         content = " ".join(
                             item.get("text", "")
@@ -172,7 +200,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         )
 
                     # ── Extract thinking ──
-                    thinking = getattr(msg, "thinking", "") or ""
+                    thinking = msg.get("thinking") or ""
 
                     # ── Accumulate into batch (guard against None) ──
                     if thinking:
@@ -183,28 +211,24 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     should_flush = False
 
                     # ── Tool calls force immediate flush ──
-                    tool_calls = msg.tool_calls
-                    if tool_calls:  # guard against None
+                    tool_calls = msg.get("tool_calls")
+                    if tool_calls:  # guard against None/empty
                         has_tool_calls = True
                         formatted = []
                         for tc in tool_calls:
                             if tc is None:
                                 continue
-                            tc_func = getattr(tc, "function", None)
-                            if tc_func is None:
-                                tc_name = "?"
-                                tc_args_json = "{}"
+                            tc_func = tc.get("function", {}) or {}
+                            tc_name = tc_func.get("name") or "?"
+                            tc_args = tc_func.get("arguments") or ""
+                            if isinstance(tc_args, str):
+                                tc_args_json = tc_args
                             else:
-                                tc_name = getattr(tc_func, "name", "?") or "?"
-                                tc_args = getattr(tc_func, "arguments", None) or ""
-                                if isinstance(tc_args, str):
-                                    tc_args_json = tc_args
-                                else:
-                                    tc_args_json = orjson.dumps(tc_args).decode() if tc_args else "{}"
+                                tc_args_json = orjson.dumps(tc_args).decode() if tc_args else "{}"
                             is_write_tool = tc_name == "write"
                             formatted.append({
                                 "index": tool_call_index,
-                                "id": getattr(tc, "id", None) or f"call_{_fast_id()}",
+                                "id": tc.get("id") or f"call_{_fast_id()}",
                                 "type": "function",
                                 "function": {
                                     "name": tc_name,
@@ -239,13 +263,13 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         batch_timer = time.monotonic()
 
                     # ── Done from Ollama ──
-                    if chunk.done:
-                        prompt_tokens = chunk.prompt_eval_count or 0
-                        completion_tokens = chunk.eval_count or 0
+                    if chunk.get("done"):
+                        prompt_tokens = chunk.get("prompt_eval_count") or 0
+                        completion_tokens = chunk.get("eval_count") or 0
                         graceful = True
                         logger.debug(
-                            f"[{request_id}] DONE | P={chunk.prompt_eval_count} C={chunk.eval_count} "
-                            f"reason={chunk.done_reason} chunks={chunks_captured}"
+                            f"[{request_id}] DONE | P={chunk.get('prompt_eval_count')} C={chunk.get('eval_count')} "
+                            f"reason={chunk.get('done_reason')} chunks={chunks_captured}"
                         )
                         # Flush remaining tokens before done chunk
                         frame = _flush_batch()
@@ -347,10 +371,12 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
         except asyncio.CancelledError:
             logger.warning(f"[{request_id}] Stream cancelled (client disconnected)")
             return
-        except ollama.ResponseError as e:
+        except httpx.HTTPStatusError as e:
             elapsed = round(time.monotonic() - start_time, 2)
-            logger.error(f"[{request_id}] Ollama ResponseError {e.status_code}: {e.error}")
-            yield build_sse_error_frame(str(e.error)[:100], "upstream_error")
+            status = e.response.status_code
+            message = str(e.error) if hasattr(e, 'error') else str(e)
+            logger.error(f"[{request_id}] Ollama HTTP error {status}: {message}")
+            yield build_sse_error_frame(message[:100], "upstream_error")
             yield build_done_chunk(
                 request_id_str, created, active_model,
                 has_tool_calls, prompt_tokens, completion_tokens,
