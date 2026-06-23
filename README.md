@@ -65,7 +65,7 @@ curl -X POST https://YOUR-URL.trycloudflare.com/v1/chat/completions \
 
 ---
 
-## 📁 Project Structure
+## <img src="assets/folder.png" width="50"> Project Structure
 
 ```
 kaggle-ollama-gateway/
@@ -151,7 +151,7 @@ PORT=8000
 
 ---
 
-## 🤖 Model Sources
+## <img src="assets/search.png" width="50"> Model Sources
 
 ### 1. Ollama Library Models
 
@@ -175,7 +175,7 @@ Browse [bartowski GGUF repos](https://huggingface.co/bartowski) for heavily opti
 
 ---
 
-## 💻 Examples
+## <img src="assets/written.png" width="50"> Examples
 
 ### OpenAI Python SDK
 
@@ -258,7 +258,7 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
 
 ---
 
-## 🏗️ Architecture
+## <img src="assets/data.png" width="50"> Architecture
 
 ```
 Client (OpenAI SDK / Pi Agent / curl)
@@ -284,7 +284,7 @@ Ollama (localhost:11434) ──→ GPU inference
 
 ---
 
-## 🔧 Troubleshooting
+## <img src="assets/troubleshooting.png" width="50"> Troubleshooting
 
 ### Model fails to download
 - Check internet: `!ping -c 1 ollama.com`
