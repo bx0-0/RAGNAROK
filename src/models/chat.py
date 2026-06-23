@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.models.shared import ChatMessage
 
@@ -22,6 +22,13 @@ class Tool(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage]
+
+    @field_validator("messages")
+    @classmethod
+    def _reject_empty_messages(cls, v):
+        if not v:
+            raise ValueError("messages must not be empty")
+        return v
     model: str | None = None
     stream: bool = False
     tools: list[Tool] | None = None

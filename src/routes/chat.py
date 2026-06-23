@@ -152,8 +152,19 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
         raise
     except Exception as e:
         elapsed = round(time.monotonic() - start_time, 2)
+        logger.error(f"[{request_id}] Non-stream error: {e}")
         await log_request(request_id, "POST", "/v1/chat/completions", 500, elapsed, 0, 0, f"ERR:{str(e)[:40]}")
-        return Response(status_code=500, content=orjson.dumps({"error": str(e)}), media_type="application/json")
+        return Response(
+            status_code=500,
+            content=orjson.dumps({
+                "error": {
+                    "message": "Upstream Ollama error",
+                    "type": "server_error",
+                    "detail": str(e)[:120],
+                }
+            }),
+            media_type="application/json",
+        )
 
     elapsed = round(time.monotonic() - start_time, 2)
     await log_request(request_id, "POST", "/v1/chat/completions", 200, elapsed, prompt_tokens, completion_tokens, "NON-STREAM")
