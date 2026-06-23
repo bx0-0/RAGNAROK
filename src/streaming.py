@@ -241,8 +241,8 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                             logger.error(f"[{request_id}] Tool call serialize failed: {ex}")
                         should_flush = True
 
-                    # ── Time-based flush ──
-                    if (time.monotonic() - batch_timer) > 0.1:
+                    # ── Time-based flush (30ms on slow GPUs, 100ms was too much latency) ──
+                    if (time.monotonic() - batch_timer) > 0.03:
                         should_flush = True
 
                     if should_flush:
