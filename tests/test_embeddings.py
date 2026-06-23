@@ -7,7 +7,7 @@ import json
 import httpx
 import pytest
 
-BASE = "https://constraint-viewing-strengths-bride.trycloudflare.com/v1"
+BASE = "https://sunny-lavender-hermit-crab-palace.trycloudflare.com/v1"
 EMBEDDING_MODEL = "embeddinggemma:300m"
 TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0)
 
