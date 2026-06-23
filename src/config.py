@@ -9,7 +9,7 @@ _MODEL_LIST = [_SHORT_ALIASES.get(m, m) for m in _RAW_MODEL_LIST]
 MODEL_NAME = _MODEL_LIST[0]  # Default = first model
 
 # ─── Server config ───
-MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", "1"))
+MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", "2"))
 NUM_CTX = int(os.environ.get("NUM_CTX", "16384"))
 NUM_PREDICT = int(os.environ.get("NUM_PREDICT", "16384"))
 NUM_BATCH = int(os.environ.get("NUM_BATCH", "2444"))
