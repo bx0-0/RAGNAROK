@@ -66,7 +66,15 @@ async def openai_embeddings(request: Request):
         )
     except Exception as e:
         elapsed = round(time.monotonic() - start_time, 2)
-        await log_request(request_id, "POST", "/v1/embeddings", 502, elapsed, 0, 0, f"ERR:{str(e)[:40]}")
+        err_msg = str(e)
+        # Improve the message for unsupported embedding models
+        if "embeddings" in err_msg.lower():
+            err_msg = (
+                f"Model '{model}' does not support embeddings. "
+                f"Pull an embedding model first (e.g. nomic-embed-text): "
+                f"ollama pull nomic-embed-text"
+            )
+        await log_request(request_id, "POST", "/v1/embeddings", 502, elapsed, 0, 0, f"ERR:{err_msg[:40]}")
         return Response(
             status_code=502,
             content=orjson.dumps({"error": {"message": str(e), "type": "upstream_error"}}),

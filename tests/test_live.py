@@ -10,8 +10,14 @@ import asyncio
 import pytest
 import httpx
 
-BASE = "https://begun-ist-away-ranking.trycloudflare.com/v1"
-TIMEOUT = 60  # generous for Kaggle GPUs
+BASE = "https://actions-supplied-treo-listprice.trycloudflare.com/v1"
+TIMEOUT_STREAM = 60   # streaming: can abort mid-way
+TIMEOUT_NONSTREAM = 180  # non-stream must wait for full response + blocked by semaphore behind other streams
+MODEL_NAME = "qwen3.5:27b-mtp-q4_K_M"  # only deployed model — no embedding support
+
+# Per-endpoint timeout tuples: (connect, read)
+SSE_TIMEOUT = httpx.Timeout(connect=10.0, read=TIMEOUT_STREAM)
+NONSTREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=TIMEOUT_NONSTREAM)
 
 
 @pytest.fixture(scope="module")
