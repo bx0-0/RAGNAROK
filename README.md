@@ -258,6 +258,28 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
 
 ---
 
+## 🧪 Testing
+
+67 tests across 5 files — unit + live integration. Update `BASE` URLs in test files before running live suites.
+
+```bash
+# Unit tests (no server needed)
+python -m pytest tests/test_sse.py tests/test_utils.py -v
+
+# Live tests (requires running gateway)
+python -m pytest tests/test_live.py tests/test_tool_calls.py tests/test_embeddings.py -v
+```
+
+| Suite | Tests | Coverage |
+|-------|-------|----------|
+| `test_sse.py` | 9 | SSE framing, envelope caching |
+| `test_utils.py` | 27 | Message conversion, tool formatting |
+| `test_live.py` | 13 | Chat, streaming, concurrency |
+| `test_tool_calls.py` | 8 | Tool call lifecycle |
+| `test_embeddings.py` | 10 | Embedding endpoints, validation |
+
+---
+
 ## <img src="assets/data.png" width="50"> Architecture
 
 ```
