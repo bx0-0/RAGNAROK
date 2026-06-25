@@ -9,3 +9,4 @@ cloudflared
 *.log
 .DS_Store
 .env
+PROJECT.md
