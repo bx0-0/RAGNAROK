@@ -92,11 +92,13 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
 
             try:
                 # ── Raw httpx stream — we own the HTTP connection lifecycle ──
-                # Using raw httpx (not ollama lib) so we control abort semantics
-                async with httpx.AsyncClient(
-                    follow_redirects=True,
-                ).stream("POST", ollama_chat_url, json=ollama_payload, timeout=1800.0) as response:
+                async with httpx.AsyncClient(follow_redirects=True).stream(
+                    "POST", ollama_chat_url, json=ollama_payload, timeout=1800.0
+                ) as response:
                     response.raise_for_status()
+
+                    # Create iterator ONCE — reusing it prevents StreamError on retry
+                    line_iter = response.aiter_lines()
 
                     while True:
                         # ── Hard Timeout ──
@@ -120,7 +122,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         CHUNK_TIMEOUT = 60
                         try:
                             line = await asyncio.wait_for(
-                                response.aiter_lines().__anext__(),
+                                line_iter.__anext__(),
                                 timeout=CHUNK_TIMEOUT,
                             )
                         except StopAsyncIteration:
