@@ -93,9 +93,9 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             try:
                 # ── Raw httpx stream — we own the HTTP connection lifecycle ──
                 # Using raw httpx (not ollama lib) so we control abort semantics
-                async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=7200.0)).stream(
-                    "POST", ollama_chat_url, json=ollama_payload
-                ) as response:
+                async with httpx.AsyncClient(
+                    follow_redirects=True,
+                ).stream("POST", ollama_chat_url, json=ollama_payload, timeout=1800.0) as response:
                     response.raise_for_status()
 
                     while True:
