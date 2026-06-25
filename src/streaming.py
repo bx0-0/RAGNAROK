@@ -55,8 +55,8 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
         chat_kwargs["options"] = ollama_payload["options"]
     if ollama_payload.get("tools"):
         chat_kwargs["tools"] = ollama_payload["tools"]
-    if ollama_payload.get("tool_choice"):
-        chat_kwargs["tool_choice"] = ollama_payload["tool_choice"]
+    # NB: ollama lib does not accept tool_choice kwarg; the API itself
+    # defaults to "auto" when tools are provided, which is correct behavior.
 
     # ── Immediate ping so client doesn't timeout while we wait for Ollama ──
     yield _SSE_KEEPALIVE
