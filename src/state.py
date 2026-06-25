@@ -53,8 +53,9 @@ async def _warmup(state: GatewayState):
         logger.info(f"Model '{MODEL_NAME}' is warm and ready!")
     except Exception as e:
         state.warmup_ok = False
-        state.is_warm = True
+        state.is_warm = False
         logger.warning(f"Warm-up for '{MODEL_NAME}' failed: {e}")
+        logger.warning("Server will return 503 until model loads successfully.")
 
 
 

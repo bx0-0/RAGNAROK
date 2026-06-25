@@ -9,7 +9,7 @@ echo "  ├─ Cleaning old processes..."
 if pgrep -f cloudflared >/dev/null 2>&1; then pkill -f cloudflared; fi
 if pgrep -f "src.server" >/dev/null 2>&1; then pkill -f "src.server"; fi
 if fuser 8000/tcp >/dev/null 2>&1; then fuser -k 8000/tcp; fi
-rm -f cloudflared 2>/dev/null || true
+# Do not force-re-download cloudflared; existence check handles it later
 
 echo "  ├─ Installing zstd (required by Ollama)..."
 apt-get update -qq > /dev/null 2>&1 && apt-get install -y -qq zstd > /dev/null 2>&1 || true
