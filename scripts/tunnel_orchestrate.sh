@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Tunnel orchestrator — replaces the old monolithic tunnel.sh
-# Sources sub-scripts: healthcheck, start, watchdog
+# Tunnel orchestrator — replaces the old monolithic tunnel.sh.
+# Sources sub-scripts: healthcheck, start, watchdog.
 #
 
 set -e
@@ -14,7 +14,7 @@ if [ -z "$URL_FILE" ]; then
     export URL_FILE TUNNEL_LOG_FILE REQUEST_LOG_FILE
 fi
 
-# Source sub-scripts
+# Source sub-scripts (each sources tunnel_common.sh internally)
 source "$SCRIPT_DIR/tunnel_healthcheck.sh"
 source "$SCRIPT_DIR/tunnel_start.sh"
 source "$SCRIPT_DIR/tunnel_watchdog.sh"
@@ -55,7 +55,9 @@ echo -ne "  ├─ Testing tunnel endpoint"
 if ! verify_tunnel_endpoint "$PUBLIC_URL"; then
     echo ""
     echo "  ❌ Tunnel URL not reachable after 60s. Killing and retrying..."
-    read -r new_pid new_url <<< $(retry_tunnel_full "$TUNNEL_PID" | tr ':' ' ')
+
+    # FIX: Use tab delimiter instead of colon so https:// doesn't break parsing.
+    read -r new_pid new_url <<< "$(retry_tunnel_full "$TUNNEL_PID")"
     TUNNEL_PID="$new_pid"
     PUBLIC_URL="$new_url"
 else

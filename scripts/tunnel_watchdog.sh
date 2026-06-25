@@ -2,12 +2,12 @@
 #
 # Background watchdog: monitors tunnel process, restarts if it dies.
 # Checks backend health before restarting.
-# Requires: PORT, URL_FILE, TUNNEL_LOG_FILE env vars
+# Requires: PORT, URL_FILE, TUNNEL_LOG_FILE env vars.
 #
 # Usage: run_tunnel_watchdog <tunnel_pid>
 #
 
-source "$(dirname "$(readlink -f "$0")")/tunnel_url_extract.sh"
+source "$(dirname "$(readlink -f "$0")")/tunnel_common.sh"
 
 # ── Print the RAGNAROK online banner ──
 print_ragnarok_banner() {
@@ -16,7 +16,6 @@ print_ragnarok_banner() {
     local port="${PORT:-8000}"
     local first_model=$(echo "$model_names" | awk '{print $1}')
 
-    # Convert HF names to display-friendly short aliases
     local display_models=""
     for M in ${MODEL_NAME:-qwen3:8b}; do
         if [[ "$M" == hf.co/* ]]; then
@@ -39,7 +38,6 @@ print_ragnarok_banner() {
     echo -e "\033[0;36m\033[1m  Default\033[2m   \033[0;32m${first_model:-qwen3:8b}\033[0m"
     echo -e "\033[0;36m\033[1m  Port\033[2m      \033[1;37m${port}\033[0m"
 
-    # Hint if any HF model was used
     local hf_found=0
     for M in $MODEL_NAME; do
         if [[ "$M" == hf.co/* ]]; then
@@ -70,7 +68,8 @@ run_tunnel_watchdog() {
             # ── Check backend is alive ──
             local backend_up=0
             for _ in $(seq 1 5); do
-                if curl -s -o /dev/null -w "%{http_code}" "http://localhost:${port}/v1/models" 2>/dev/null | grep -q "200"; then
+                if curl -s -o /dev/null -w "%{http_code}" \
+                       "http://localhost:${port}/v1/models" 2>/dev/null | grep -q "200"; then
                     backend_up=1
                     break
                 fi
@@ -97,22 +96,21 @@ run_tunnel_watchdog() {
             pkill -9 -f cloudflared 2>/dev/null || true
             sleep 2
 
-            # ── Restart tunnel ──
-            ./cloudflared tunnel --url "http://localhost:${port}" --metrics 0.0.0.0:8282 --no-autoupdate > "${TUNNEL_LOG_FILE}" 2>&1 &
+            # ── Restart via shared helper ──
+            _exec_cloudflared "$port"
             tunnel_pid=$!
             sleep 4
 
             if kill -0 "$tunnel_pid" 2>/dev/null; then
-                # Extract new URL
                 local new_url=""
                 for _ in $(seq 1 15); do
-                    new_url=$(extract_tunnel_url || true)
+                    new_url=$(_extract_url_from_logs)
                     if [ -n "$new_url" ]; then break; fi
                     sleep 2
                 done
 
                 if [ -n "$new_url" ]; then
-                    write_url_file "$new_url"
+                    _write_url_file "$new_url"
                     print_ragnarok_banner "$new_url"
                 else
                     echo "  ✅ Tunnel restarted (URL extraction failed, check logs)"
