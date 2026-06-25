@@ -10,3 +10,4 @@ cloudflared
 .DS_Store
 .env
 PROJECT.md
+CONVENTIONS.md
