@@ -8,39 +8,52 @@ import orjson
 _SSE_DONE = b"data: [DONE]\n\n"
 _SSE_KEEPALIVE = b"data: {\"choices\":[{\"delta\":{},\"index\":0,\"finish_reason\":null}]}\n\n"
 
-# Marker used inside cached template to be replaced at runtime
-_SSE_MARKER_ID = "\xffID"
+# Marker for the delta key — orjson outputs this deterministically
+_DELTA_KEY = b'"delta":'
 
 
 @lru_cache(maxsize=16)
 def _sse_template_for_model(model: str):
-    """Build the SSE JSON envelope once per model with unique string markers.
+    """Build the SSE JSON envelope once per model.
 
-    Returns (prefix_bytes, suffix_bytes) ready for:
+    Splits *after* `\"delta\":` so prefix ends with the colon and suffix
+    starts with `,\"index\":...`. Callers do:
         yield prefix + orjson.dumps(delta) + suffix
+
+    The prefix still contains placeholder id and created values that are
+    replaced per-request in make_sse_frames().
     """
     tpl = orjson.dumps({
-        "id": _SSE_MARKER_ID,
+        "id": "",
         "object": "chat.completion.chunk",
         "created": 0,
         "model": model,
-        "choices": [{"delta": "__DELTA__", "index": 0, "finish_reason": None}],
+        "choices": [{"delta": None, "index": 0, "finish_reason": None}],
     })
-    _marker = b'"__DELTA__"'
-
-    _dpos = tpl.index(_marker)
-    prefix = tpl[:_dpos]
-    suffix = tpl[_dpos + len(_marker):]
-    return (b"data: " + prefix, suffix + b"\n\n")
+    # Find the delta key position
+    key_pos = tpl.index(_DELTA_KEY) + len(_DELTA_KEY)
+    # Advance past `null` to find the comma separator
+    suffix_start = tpl.find(b',', key_pos)
+    prefix = b"data: " + tpl[:key_pos]
+    suffix = tpl[suffix_start:] + b"\n\n"
+    return (prefix, suffix)
 
 
 def make_sse_frames(model: str, request_id_str: str, created: int):
-    """Inject real id + timestamp into cached SSE envelope."""
+    """Inject real id + timestamp into cached SSE envelope.
+
+    Uses deterministic byte replacement on the placeholder values that
+    orjson produces for empty-string id and zero-valued created.
+    """
     prefix, suffix = _sse_template_for_model(model)
-    _id_placeholder = f'"{_SSE_MARKER_ID}"'.encode()
-    _real_id = f'"{request_id_str}"'.encode()
-    prefix = prefix.replace(_id_placeholder, _real_id, 1)
+
+    # orjson serialises "" → b'""'  (2 bytes)
+    _empty_id = b'"id":""'
+    _real_id  = b'"id":' + orjson.dumps(request_id_str)
+
+    prefix = prefix.replace(_empty_id, _real_id, 1)
     prefix = prefix.replace(b'"created":0', f'"created":{created}'.encode(), 1)
+
     return (prefix, suffix)
 
 

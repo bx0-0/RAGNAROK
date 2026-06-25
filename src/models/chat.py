@@ -43,15 +43,14 @@ class ChatCompletionRequest(BaseModel):
         messages_converted: list[dict],
     ) -> dict[str, Any]:
         """Convert this request into an Ollama chat kwargs dict."""
+        # tool_choice: ollama.AsyncClient.chat() ignores this kwarg in v0.4.x;
+        # the model handles tool selection automatically when tools are present.
         payload = {
             "model": active_model,
             "messages": messages_converted,
-            "stream": True,
             "keep_alive": keep_alive,
             "options": {**ollama_opts, "thinking": {"enabled": self.thinking}},
         }
         if self.tools:
             payload["tools"] = [t.model_dump() for t in self.tools]
-        if self.tool_choice:
-            payload["tool_choice"] = self.tool_choice
         return payload
