@@ -3,7 +3,7 @@
 import os
 
 # ─── Model config ───
-_RAW_MODEL_LIST = os.environ.get("MODEL_NAME", "qwen3:8b").split()
+_RAW_MODEL_LIST = os.environ.get("MODEL_NAME", "qwen3.5:9b").split()
 _SHORT_ALIASES = {name: name.split("/", 3)[-1] for name in _RAW_MODEL_LIST if name.startswith("hf.co/")}
 _MODEL_LIST = [_SHORT_ALIASES.get(m, m) for m in _RAW_MODEL_LIST]
 MODEL_NAME = _MODEL_LIST[0]  # Default = first model
@@ -12,7 +12,7 @@ MODEL_NAME = _MODEL_LIST[0]  # Default = first model
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", "2"))
 NUM_CTX = int(os.environ.get("NUM_CTX", "16384"))
 NUM_PREDICT = int(os.environ.get("NUM_PREDICT", "16384"))
-NUM_BATCH = int(os.environ.get("NUM_BATCH", "2444"))
+NUM_BATCH = int(os.environ.get("NUM_BATCH", "500"))
 FLASH_ATTN = os.environ.get("FLASH_ATTN", "True").lower() in ("true", "1", "yes")
 NUM_GPU = int(os.environ.get("NUM_GPU", "-1"))
 KEEP_ALIVE = os.environ.get("KEEP_ALIVE", "60m")

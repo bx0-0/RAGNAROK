@@ -19,7 +19,7 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config/settings.env"
 
-MODEL_NAME="qwen3:8b"
+MODEL_NAME="qwen3.5:9b"
 MAX_CONCURRENT=1
 NUM_CTX=16384
 NUM_PREDICT=16384
@@ -63,7 +63,7 @@ while [[ $# -gt 0 ]]; do
         --help)
             echo "Usage: bash start.sh [OPTIONS]"
             echo "  --model <model1> [model2] ...   Model(s) to load"
-            echo "                                  Regular: qwen3:8b, llama3.3:70b"
+            echo "                                  Regular: qwen3.5:9b, llama3.3:70b"
             echo "                                  HuggingFace GGUF: hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF"
             echo "                                              hf.co/user/repo:Q8_0"
             exit 0

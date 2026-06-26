@@ -137,7 +137,7 @@ PORT=8000
 
 | Flag | Description | Default |
 |---|---|---|
-| `--model <name>` | Ollama model or `hf.co/...` (repeat for multiple) | `qwen3:8b` |
+| `--model <name>` | Ollama model or `hf.co/...` (repeat for multiple) | `qwen3.5:9b` |
 | `--max-concurrent <n>` | Max simultaneous requests | `1` |
 | `--num-ctx <n>` | Context window size | `16384` |
 | `--num-predict <n>` | Max generation tokens | `16384` |
@@ -253,7 +253,7 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
 ```python
 !git clone https://github.com/bx0-0/RAGNAROK.git
 %cd RAGNAROK
-!bash start.sh --model qwen3:8b --verbose-log True --num-batch 2000 --num-ctx 32768 --max-concurrent 2
+!bash start.sh --model qwen3.5:9b --verbose-log True --num-batch 2000 --num-ctx 32768 --max-concurrent 2
 ```
 
 ---
