@@ -38,7 +38,7 @@ Run these commands directly in a notebook cell:
 ```python
 !git clone https://github.com/bx0-0/RAGNAROK.git
 %cd RAGNAROK
-!bash start.sh --model qwen3.6:27b --verbose-log True --num-batch 3000 --num-ctx 100000 --max-concurrent 3
+!bash start.sh --model qwen3.6:35b --verbose-log True --num-ctx 100000
 ```
 
 You'll receive a public URL like:
@@ -57,7 +57,7 @@ curl https://YOUR-URL.trycloudflare.com/v1/models
 curl -X POST https://YOUR-URL.trycloudflare.com/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "qwen3.6:27b",
+    "model": "qwen3.6:35b",
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": true
   }'
@@ -109,7 +109,7 @@ Edit `config/settings.env` or override via CLI:
 
 ```env
 # Model to load (Ollama library or HuggingFace GGUF)
-MODEL_NAME=qwen3.6:27b
+MODEL_NAME=qwen3.6:35b
 
 # Max concurrent requests (Kaggle T4 30GB: 2-3, Colab T4 15GB: 1-2)
 MAX_CONCURRENT=3
@@ -158,7 +158,7 @@ PORT=8000
 Any model from the [Ollama library](https://ollama.com/library). Just specify the name:
 
 ```bash
-bash start.sh --model qwen3.6:27b
+bash start.sh --model qwen3.6:35b
 ```
 
 ### 2. HuggingFace GGUF Models
@@ -188,7 +188,7 @@ client = OpenAI(
 )
 
 resp = client.chat.completions.create(
-    model="qwen3.6:27b",
+    model="qwen3.6:35b",
     messages=[{"role": "user", "content": "Write a haiku"}],
     stream=True,
 )
@@ -209,7 +209,7 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
       "apiKey": "sk-anything",
       "models": [
         {
-          "id": "qwen3.6:27b",
+          "id": "qwen3.6:35b",
           "name": "Qwen 27B",
           "contextWindow": 80000,
           "input": ["text"]
@@ -240,7 +240,7 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
 ```python
 !git clone https://github.com/bx0-0/RAGNAROK.git
 %cd RAGNAROK
-!bash start.sh --model qwen3.6:27b --verbose-log True --num-batch 3000 --num-ctx 100000 --max-concurrent 3
+!bash start.sh --model qwen3.6:35b --verbose-log True --num-ctx 100000
 ```
 
 ### Google Colab (Free Tier)
