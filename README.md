@@ -36,8 +36,8 @@ Works with: **Codex · OpenCode · Cursor · VSCode AI extensions · Pi Agent ·
 Run these commands directly in a notebook cell:
 
 ```python
-!git clone https://github.com/Saber120/test.git
-%cd test
+!git clone https://github.com/bx0-0/RAGNAROK.git
+%cd RAGNAROK
 !bash start.sh --model qwen3.6:27b --verbose-log True --num-batch 3000 --num-ctx 100000 --max-concurrent 3
 ```
 
@@ -238,8 +238,8 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
 - Suitable for models up to ~27B with generous context windows
 
 ```python
-!git clone https://github.com/Saber120/test.git
-%cd test
+!git clone https://github.com/bx0-0/RAGNAROK.git
+%cd RAGNAROK
 !bash start.sh --model qwen3.6:27b --verbose-log True --num-batch 3000 --num-ctx 100000 --max-concurrent 3
 ```
 
@@ -251,8 +251,8 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
 - Use smaller models (7B–8B) and moderate `--num-ctx` (16384–32768)
 
 ```python
-!git clone https://github.com/Saber120/test.git
-%cd test
+!git clone https://github.com/bx0-0/RAGNAROK.git
+%cd RAGNAROK
 !bash start.sh --model qwen3:8b --verbose-log True --num-batch 2000 --num-ctx 32768 --max-concurrent 2
 ```
 
