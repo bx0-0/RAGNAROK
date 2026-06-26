@@ -22,8 +22,8 @@ class TestStaticSSE:
         assert data["choices"][0]["finish_reason"] is None
 
     def test_template_cached(self):
-        r1 = _sse_template_for_model("qwen3:8b")
-        r2 = _sse_template_for_model("qwen3:8b")
+        r1 = _sse_template_for_model("qwen3.5:9b")
+        r2 = _sse_template_for_model("qwen3.5:9b")
         assert r1 is r2
 
     def test_template_different_models(self):
@@ -36,7 +36,7 @@ class TestStaticSSE:
 
 class TestMakeSSEFrames:
     def test_injects_id_and_created(self):
-        sfx, efx = make_sse_frames("qwen3:8b", "chatcmpl-abc123", 1700000000)
+        sfx, efx = make_sse_frames("qwen3.5:9b", "chatcmpl-abc123", 1700000000)
         assert b"chatcmpl-abc123" in sfx
         assert b'"created":1700000000' in sfx
 

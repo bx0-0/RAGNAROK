@@ -72,7 +72,7 @@ SEP=$(printf '=%.0s' $(seq 1 56))
 
 # Convert HF names to display-friendly short aliases
 DISPLAY_MODEL_NAMES=""
-for M in ${MODEL_NAME:-qwen3:8b}; do
+for M in ${MODEL_NAME:-qwen3.5:9b}; do
     if [[ "$M" == hf.co/* ]]; then
         SHORT=$(echo "$M" | sed 's|hf\.co/[^/]*/||')
         DISPLAY_MODEL_NAMES="$DISPLAY_MODEL_NAMES $SHORT"
@@ -88,7 +88,7 @@ echo -e "\033[0;35m\033[1m  ${SEP}\033[0m"
 echo -e "\033[0;36m\033[1m  Endpoint\033[2m  \033[1;33m${PUBLIC_URL}/v1\033[0m"
 echo -e "\033[0;36m\033[1m  Models\033[2m    \033[0;32m${DISPLAY_MODEL_NAMES}\033[0m"
 FIRST_SHORT=$(echo "$DISPLAY_MODEL_NAMES" | awk '{print $1}')
-echo -e "\033[0;36m\033[1m  Default\033[2m   \033[0;32m${FIRST_SHORT:-qwen3:8b}\033[0m"
+echo -e "\033[0;36m\033[1m  Default\033[2m   \033[0;32m${FIRST_SHORT:-qwen3.5:9b}\033[0m"
 echo -e "\033[0;36m\033[1m  Port\033[2m      \033[1;37m${PORT:-8000}\033[0m"
 
 # Hint if any HF model was used
