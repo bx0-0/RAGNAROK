@@ -17,7 +17,7 @@ print_ragnarok_banner() {
     local first_model=$(echo "$model_names" | awk '{print $1}')
 
     local display_models=""
-    for M in ${MODEL_NAME:-qwen3:8b}; do
+    for M in ${MODEL_NAME:-qwen3.5:9b}; do
         if [[ "$M" == hf.co/* ]]; then
             SHORT=$(echo "$M" | sed 's|hf\.co/[^/]*/||')
             display_models="$display_models $SHORT"
@@ -35,7 +35,7 @@ print_ragnarok_banner() {
     echo -e "\033[0;35m\033[1m  ${sep}\033[0m"
     echo -e "\033[0;36m\033[1m  Endpoint\033[2m  \033[1;33m${url}/v1\033[0m"
     echo -e "\033[0;36m\033[1m  Models\033[2m    \033[0;32m${display_models}\033[0m"
-    echo -e "\033[0;36m\033[1m  Default\033[2m   \033[0;32m${first_model:-qwen3:8b}\033[0m"
+    echo -e "\033[0;36m\033[1m  Default\033[2m   \033[0;32m${first_model:-qwen3.5:9b}\033[0m"
     echo -e "\033[0;36m\033[1m  Port\033[2m      \033[1;37m${port}\033[0m"
 
     local hf_found=0
