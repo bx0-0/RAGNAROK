@@ -54,14 +54,13 @@ echo " ✅"
 # Wait briefly for DNS propagation before first check
 sleep 2
 if ! verify_tunnel_endpoint "$PUBLIC_URL"; then
-    echo " ✅ (initial handshake delayed)"
-    echo -ne "  ├─ Retrying tunnel connection..."
+    echo ""
+    echo "  ├─ Initial tunnel not ready, retrying..."
 
     # FIX: Use tab delimiter instead of colon so https:// doesn't break parsing.
     read -r new_pid new_url <<< "$(retry_tunnel_full "$TUNNEL_PID")"
     TUNNEL_PID="$new_pid"
     PUBLIC_URL="$new_url"
-    echo " ✅ (recovered)"
 else
     echo " ✅"
 fi
