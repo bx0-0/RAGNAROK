@@ -11,3 +11,4 @@ cloudflared
 .env
 PROJECT.md
 CONVENTIONS.md
+graphify-out/

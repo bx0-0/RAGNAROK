@@ -7,6 +7,7 @@
 </h1>
 <p align="center">
   Run powerful open-source LLMs on <strong>free Kaggle / Colab GPUs</strong> with a public OpenAI-compatible API.
+  Now with **TTS** (text-to-speech) and **auto garbage collection** for memory safety.
 </p>
 
 <div align="center">
@@ -15,6 +16,8 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![Kaggle](https://img.shields.io/badge/runs%20on-Kaggle-20BEFF)](https://www.kaggle.com)
 [![Colab](https://img.shields.io/badge/runs%20on-Colab-F9AB00)](https://colab.research.google.com)
+[![TTS](https://img.shields.io/badge/TTS-OmniVoice%20%2B%20Inflect-purple.svg)](https://huggingface.co/k2-fsa/OmniVoice)
+[![GC](https://img.shields.io/badge/GC-Auto%20Eviction-green.svg)]()
 
 </div>
 
@@ -26,6 +29,8 @@
 2. Wraps Ollama's API with an **OpenAI-compatible** endpoint
 3. Exposes it publicly via a **Cloudflare Tunnel**
 4. You get a working `https://*.trycloudflare.com/v1` URL for any OpenAI client
+5. **TTS endpoints** — text-to-speech with OmniVoice (600+ languages) or Inflect v2 (English, CPU-only)
+6. **Auto GC** — idle models auto-evict from memory after configurable timeout
 
 Works with: **Codex · OpenCode · Cursor · VSCode AI extensions · Pi Agent · any OpenAI agent framework**
 
@@ -81,14 +86,22 @@ kaggle-ollama-gateway/
 │   └── tunnel_*.sh           # Tunnel healthcheck, start, watchdog helpers
 ├── src/
 │   ├── server.py             # FastAPI app + lifespan + uvloop config
-│   ├── config.py             # Env-based configuration
+│   ├── config.py             # Env-based configuration (TTS, GC settings)
+│   ├── gc.py                 # Model garbage collector — auto-evicts idle models
 │   ├── state.py              # Async Ollama client, semaphore, warmup
 │   ├── routes/               # OpenAI-compatible endpoints
 │   │   ├── chat.py           # POST /v1/chat/completions (stream + non-stream)
+│   │   ├── tts.py            # POST /v1/audio/speech + unload/list engines
 │   │   ├── models.py         # GET /v1/models
 │   │   ├── embeddings.py     # POST /v1/embeddings
 │   │   └── health.py         # GET /health
 │   ├── models/               # Pydantic request/response schemas
+│   │   └── tts.py            # SpeechRequest schema
+│   ├── tts/                  # TTS plugin system
+│   │   ├── __init__.py       # Engine registry — add engines here
+│   │   ├── base.py           # AbstractTTSEngine interface
+│   │   ├── omnivoice_engine.py  # OmniVoice (600+ langs, voice design)
+│   │   └── inflect_engine.py    # Inflect v2 (English only, ~16MB)
 │   ├── streaming.py          # SSE generator with token batching + retries
 │   ├── sse.py                # SSE protocol helpers + envelope caching
 │   ├── utils.py              # OpenAI ↔ Ollama message conversion
@@ -131,6 +144,17 @@ KEEP_ALIVE=60m
 
 # FastAPI port
 PORT=8000
+
+# == TTS Settings ==
+TTS_ENABLED=true                    # Enable/disable TTS endpoint
+TTS_DEFAULT_ENGINE=omnivoice        # omnivoice | inflect
+TTS_OMNIVOICE_DEVICE=cuda           # cuda | cpu
+TTS_INFLECT_VARIANT=nano            # nano (~16MB) | micro (~38MB)
+TTS_MAX_CHARS=5000                  # Max chars per TTS request
+
+# == Garbage Collection ==
+GC_IDLE_TIMEOUT=600                 # Auto-evict idle models after N seconds (0 = never)
+GC_SWEEP_INTERVAL=60                # GC check interval in seconds
 ```
 
 ### Full CLI Flags
@@ -146,6 +170,11 @@ PORT=8000
 | `--num-gpu <n>` | GPU layers (-1 = all) | `-1` |
 | `--keep-alive <dur>` | Model keep-alive duration | `60m` |
 | `--port <n>` | Server port | `8000` |
+| `--tts-enabled <bool>` | Enable/disable TTS endpoint | `true` |
+| `--tts-engine <name>` | Default TTS engine: `omnivoice` or `inflect` | `omnivoice` |
+| `--tts-device <gpu>` | OmniVoice device: `cuda` or `cpu` | `cuda` |
+| `--tts-variant <v>` | Inflect variant: `nano` or `micro` | `nano` |
+| `--gc-timeout <s>` | GC idle eviction timeout (seconds) | `600` |
 | `--debug` | Enable debug logging | off |
 | `--verbose-log` | Live request log in terminal | off |
 
