@@ -171,6 +171,12 @@ bash "$SCRIPT_DIR/scripts/setup.sh"
 echo -e "${BOLD}${WHITE}[2/4]${NC} ${DIM}Preparing Ollama & model(s)...${NC}"
 bash "$SCRIPT_DIR/scripts/install_model.sh"
 
+# ─── Step 2.5 — TTS models (non-fatal) ───
+if [ "$TTS_ENABLED" = "true" ] || [ "$TTS_ENABLED" = "True" ]; then
+    echo ""
+    bash "$SCRIPT_DIR/scripts/install_tts.sh" 2>/dev/null || true
+fi
+
 # ─── Step 3 ───
 echo -e "${BOLD}${WHITE}[3/4]${NC} ${DIM}Starting FastAPI server...${NC}"
 cd "$SCRIPT_DIR"

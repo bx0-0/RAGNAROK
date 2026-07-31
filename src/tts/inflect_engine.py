@@ -1,7 +1,5 @@
 """Inflect v2 TTS engine — English-only, ultra-small (~16MB Nano / ~38MB Micro).
 
-Installed from:  git+https://github.com/owenawsong/Inflect.git
-
 This file is a thin wrapper that registers itself with the TTS registry.
 If the library is not installed, registration is skipped silently and
 the engine is unavailable at runtime (route returns 501).
@@ -47,31 +45,15 @@ class InflectEngine(AbstractTTSEngine):
 
         try:
             from inference import InflectTTS  # noqa: F811
-
-            # Auto-download model from HF Hub if not present
-            import os
-            cache_dir = os.path.expanduser('~/.cache/inflect_tts')
-            repo_id = 'owensong/Inflect-Micro-v2' if self.variant == 'micro' else 'owensong/Inflect-Nano-v2'
-
-            if not os.path.isdir(cache_dir):
-                logger.info(f'Downloading Inflect model from {repo_id} ...')
-                try:
-                    from huggingface_hub import snapshot_download
-                    snapshot_download(repo_id=repo_id, local_dir=cache_dir)
-                except ImportError:
-                    raise RuntimeError(
-                        'huggingface_hub is not installed. Install with: pip install huggingface_hub'
-                    )
-
-            self._model = InflectTTS(cache_dir, device='cpu')
+            self._model = InflectTTS(".", device="cpu")
             self._loaded = True
-            logger.info(f'InflectTTS loaded ({self.variant})')
-        except ImportError as exc:
-            if 'inference' in str(exc):
-                raise RuntimeError(
-                    'InflectTTS is not installed. Install with: pip install inference'
-                )
-            raise
+            logger.info('InflectTTS loaded successfully')
+        except ImportError:
+            raise RuntimeError(
+                'InflectTTS is not installed. Install from:\n'
+                '  git clone https://github.com/owenawsong/Inflect.git\n'
+                '  cd Inflect \u0026\u0026 pip install -r requirements.txt'
+            )
 
     async def unload(self) -> None:
         if self._model is not None:
