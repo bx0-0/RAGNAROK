@@ -175,6 +175,10 @@ bash "$SCRIPT_DIR/scripts/install_model.sh"
 if [ "$TTS_ENABLED" = "true" ] || [ "$TTS_ENABLED" = "True" ]; then
     echo ""
     bash "$SCRIPT_DIR/scripts/install_tts.sh" 2>/dev/null || true
+    # Read Inflect model path into env var so engine finds it without re-downloading
+    if [ -f /tmp/inflect_model_dir.txt ]; then
+        export TTS_INFLECT_MODEL_DIR="$(cat /tmp/inflect_model_dir.txt)"
+    fi
 fi
 
 # ─── Step 3 ───
