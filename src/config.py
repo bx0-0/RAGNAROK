@@ -28,7 +28,16 @@ TTS_DEFAULT_ENGINE = os.environ.get("TTS_DEFAULT_ENGINE", "omnivoice")  # omnivo
 TTS_OMNIVOICE_DEVICE = os.environ.get("TTS_OMNIVOICE_DEVICE", "cuda")  # cuda | cpu
 TTS_INFLECT_VARIANT = os.environ.get("TTS_INFLECT_VARIANT", "nano")    # nano | micro
 TTS_MAX_CHARS = int(os.environ.get("TTS_MAX_CHARS", "5000"))
-TTS_CACHE_AUDIO = os.environ.get("TTS_CACHE_AUDIO", "False").lower() in ("true", "1", "yes")
+# OmniVoice defaults (override per-request via API body)
+TTS_OMNI_INSTRUCT = os.environ.get("TTS_OMNI_INSTRUCT", "male, young adult, clear")
+TTS_OMNI_NUM_STEP = int(os.environ.get("TTS_OMNI_NUM_STEP", "16"))
+TTS_OMNI_SPEED = float(os.environ.get("TTS_OMNI_SPEED", "1.0"))
+TTS_OMNI_GUIDANCE_SCALE = float(os.environ.get("TTS_OMNI_GUIDANCE_SCALE", "2.0"))
+
+# Inflect defaults (override per-request via API body)
+TTS_INFLECT_SPEED = float(os.environ.get("TTS_INFLECT_SPEED", "1.0"))
+TTS_INFLECT_VARIATION = float(os.environ.get("TTS_INFLECT_VARIATION", "0.667"))
+TTS_INFLECT_SEED = int(os.environ.get("TTS_INFLECT_SEED", "7"))
 
 # ─── GC config ───
 GC_IDLE_TIMEOUT = float(os.environ.get("GC_IDLE_TIMEOUT", "600.0"))  # 10 min default
