@@ -35,6 +35,15 @@ TTS_DEFAULT_ENGINE=omnivoice
 TTS_OMNIVOICE_DEVICE=cuda
 TTS_INFLECT_VARIANT=nano
 TTS_MAX_CHARS=5000
+# OmniVoice defaults
+TTS_OMNI_INSTRUCT="male, young adult, clear"
+TTS_OMNI_NUM_STEP=16
+TTS_OMNI_SPEED=1.0
+TTS_OMNI_GUIDANCE_SCALE=2.0
+# Inflect defaults
+TTS_INFLECT_SPEED=1.0
+TTS_INFLECT_VARIATION=0.667
+TTS_INFLECT_SEED=7
 GC_IDLE_TIMEOUT=600
 GC_SWEEP_INTERVAL=60
 
@@ -71,6 +80,13 @@ while [[ $# -gt 0 ]]; do
         --tts-variant)    TTS_INFLECT_VARIANT="$2"; shift 2 ;;
         --tts-max-chars)  TTS_MAX_CHARS="$2"; shift 2 ;;
         --gc-timeout)     GC_IDLE_TIMEOUT="$2"; shift 2 ;;
+        --omni-instruct)  TTS_OMNI_INSTRUCT="$2"; shift 2 ;;
+        --omni-num-step)  TTS_OMNI_NUM_STEP="$2"; shift 2 ;;
+        --omni-speed)     TTS_OMNI_SPEED="$2"; shift 2 ;;
+        --omni-guidance)  TTS_OMNI_GUIDANCE_SCALE="$2"; shift 2 ;;
+        --inflect-speed)  TTS_INFLECT_SPEED="$2"; shift 2 ;;
+        --inflect-var)    TTS_INFLECT_VARIATION="$2"; shift 2 ;;
+        --inflect-seed)   TTS_INFLECT_SEED="$2"; shift 2 ;;
         --debug)          DEBUG_MODE=True; shift ;;
         --verbose-log)    VERBOSE_LOG="$2"; shift 2 ;;
         --help)
@@ -83,7 +99,19 @@ while [[ $# -gt 0 ]]; do
             echo "  --tts-engine <omnivoice|inflect> Default TTS engine (default: omnivoice)"
             echo "  --tts-device <cuda|cpu>          OmniVoice device (default: cuda)"
             echo "  --tts-variant <nano|micro>       Inflect variant (default: nano)"
+            echo "  --tts-max-chars <n>             Max chars per TTS request (default: 5000)"
             echo "  --gc-timeout <seconds>           GC idle eviction timeout (default: 600)"
+            echo "" 
+            echo "  === OmniVoice Params ==="
+            echo "  --omni-instruct \"str\"          Voice design string (default: 'male, young adult, clear')"
+            echo "  --omni-num-step <n>             Diffusion steps 8-32 (default: 16)"
+            echo "  --omni-speed <f>                Playback speed 0.25-4.0 (default: 1.0)"
+            echo "  --omni-guidance <f>             Guidance scale 0.1-5.0 (default: 2.0)"
+            echo "" 
+            echo "  === Inflect Params ==="
+            echo "  --inflect-speed <f>             Playback speed 0.5-2.0 (default: 1.0)"
+            echo "  --inflect-var <f>               Prosody variation 0.0-1.0 (default: 0.667)"
+            echo "  --inflect-seed <n>              Random seed for reproducibility (default: 7)"
             exit 0
             ;;
         *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
@@ -109,6 +137,8 @@ done
 export MODEL_NAME FIRST_MODEL MAX_CONCURRENT NUM_CTX NUM_PREDICT NUM_BATCH
 export FLASH_ATTN NUM_GPU KEEP_ALIVE PORT DEBUG_MODE VERBOSE_LOG
 export TTS_ENABLED TTS_DEFAULT_ENGINE TTS_OMNIVOICE_DEVICE TTS_INFLECT_VARIANT TTS_MAX_CHARS
+export TTS_OMNI_INSTRUCT TTS_OMNI_NUM_STEP TTS_OMNI_SPEED TTS_OMNI_GUIDANCE_SCALE
+export TTS_INFLECT_SPEED TTS_INFLECT_VARIATION TTS_INFLECT_SEED
 export GC_IDLE_TIMEOUT GC_SWEEP_INTERVAL
 export SERVER_LOG_FILE TUNNEL_LOG_FILE URL_FILE OLLAMA_PULL_LOG REQUEST_LOG_FILE
 
