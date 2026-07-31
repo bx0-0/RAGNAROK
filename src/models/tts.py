@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, Field
 
-from ..config import (
+from src.config import (
     TTS_DEFAULT_ENGINE,
     TTS_OMNI_INSTRUCT,
     TTS_OMNI_NUM_STEP,

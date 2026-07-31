@@ -10,7 +10,7 @@ from typing import Dict, Any
 import torch
 
 from .base import AbstractTTSEngine
-from ..tts import register as _register
+from . import register as _register
 
 logger = logging.getLogger(__name__)
 
