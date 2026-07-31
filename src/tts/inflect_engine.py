@@ -45,7 +45,11 @@ class InflectEngine(AbstractTTSEngine):
 
         try:
             from inference import InflectTTS  # noqa: F811
-            self._model = InflectTTS(".", device="cpu")
+            import os
+            repo_id = 'owensong/Inflect-Micro-v2' if self.variant == 'micro' else 'owensong/Inflect-Nano-v2'
+            from huggingface_hub import snapshot_download
+            model_dir = snapshot_download(repo_id=repo_id)
+            self._model = InflectTTS(model_dir, device="cpu")
             self._loaded = True
             logger.info('InflectTTS loaded successfully')
         except ImportError:
