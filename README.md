@@ -171,9 +171,16 @@ GC_SWEEP_INTERVAL=60                # GC check interval in seconds
 | `--keep-alive <dur>` | Model keep-alive duration | `60m` |
 | `--port <n>` | Server port | `8000` |
 | `--tts-enabled <bool>` | Enable/disable TTS endpoint | `true` |
-| `--tts-engine <name>` | Default TTS engine: `omnivoice` or `inflect` | `omnivoice` |
+| `--tts-engine <name>` | Default engine: `omnivoice` or `inflect` | `omnivoice` |
 | `--tts-device <gpu>` | OmniVoice device: `cuda` or `cpu` | `cuda` |
 | `--tts-variant <v>` | Inflect variant: `nano` or `micro` | `nano` |
+| `--omni-instruct "str"` | Voice design string (gender, age, accent…) | `male, young adult, clear` |
+| `--omni-num-step <n>` | Diffusion steps 8 (fast) → 32 (quality) | `16` |
+| `--omni-speed <f>` | Playback speed 0.25–4.0 | `1.0` |
+| `--omni-guidance <f>` | Guidance scale 0.1–5.0 | `2.0` |
+| `--inflect-speed <f>` | Playback speed 0.5–2.0 | `1.0` |
+| `--inflect-var <f>` | Prosody variation 0.0–1.0 | `0.667` |
+| `--inflect-seed <n>` | Reproducibility seed | `7` |
 | `--gc-timeout <s>` | GC idle eviction timeout (seconds) | `600` |
 | `--debug` | Enable debug logging | off |
 | `--verbose-log` | Live request log in terminal | off |
@@ -253,6 +260,90 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
     }
   }
 }
+```
+
+---
+
+## 🎙️ Text-to-Speech (TTS)
+
+Two engines available via plugin system — add more without editing existing code.
+
+### OmniVoice (Default)
+
+- **600+ languages** including Arabic, Japanese, Korean, and more
+- Voice design via `instruct` string: gender, age, pitch, accent, emotion
+- Runs on GPU (`cuda`) by default
+
+```bash
+bash start.sh --model qwen3.5:9b \
+  --omni-instruct "female, middle-aged, warm" \
+  --omni-num-step 24 \
+  --omni-guidance 2.5
+```
+
+### Inflect v2
+
+- **English only**, runs on CPU
+- Tiny models: Nano (~16 MB) or Micro (~38 MB)
+- Ultra-low latency even without GPU
+
+```bash
+bash start.sh --model qwen3.5:9b \
+  --tts-engine inflect \
+  --tts-variant micro \
+  --inflect-speed 1.2 \
+  --inflect-var 0.8
+```
+
+### API Usage
+
+All parameters are configurable via `settings.env`, CLI flags, or per-request body:
+
+```bash
+# POST /v1/audio/speech
+curl -X POST https://YOUR-URL.trycloudflare.com/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "omnivoice",
+    "input": "السلام عليكم ورحمة الله",
+    "voice_instruct": "male, deep voice, calm",
+    "speed": 0.9,
+    "num_step": 24
+  }' --output out.wav
+```
+
+```python
+from openai import OpenAI
+client = OpenAI(
+    base_url="https://YOUR-URL.trycloudflare.com/v1",
+    api_key="not-needed",
+)
+resp = client.audio.speech.create(
+    model="omnivoice",
+    input="Hello world!",
+    voice_instruct="female, cheerful, british accent",
+    speed=1.2,
+)
+resp.write_to_file("speech.wav")
+```
+
+### Managing Memory
+
+TTS models load lazily on first request and auto-evict after idle timeout:
+
+```bash
+# Manually unload a specific engine
+curl -X POST https://YOUR-URL.trycloudflare.com/v1/audio/unload \
+  -H "Content-Type: application/json" \
+  -d '{"model": "omnivoice"}'
+
+# Unload all TTS engines
+curl -X POST https://YOUR-URL.trycloudflare.com/v1/audio/unload \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Check engine status
+curl https://YOUR-URL.trycloudflare.com/v1/audio/engines
 ```
 
 ---
