@@ -119,11 +119,19 @@ class OmniVoiceEngine(AbstractTTSEngine):
         sample_rate = 24000
 
         # Return raw PCM wrapped as WAV
+        # Convert to PCM — handle both numpy array and torch tensor
         import io
         import struct
         import numpy as np
 
-        pcm = (audio[0].cpu().numpy() * 32767).astype(np.int16).tobytes()
+        sample = audio[0]
+        if hasattr(sample, 'cpu'):
+            sample = sample.cpu().numpy()
+        elif not isinstance(sample, np.ndarray):
+            sample = np.array(sample)
+
+        # Clamp and convert to int16 PCM
+        pcm = (np.clip(sample * 32767, -32768, 32767)).astype(np.int16).tobytes()
         buf = io.BytesIO()
         # Minimal WAV header
         buf.write(b'RIFF')
