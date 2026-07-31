@@ -71,7 +71,7 @@ try:
         repo_id="$repo",
         cache_dir=os.path.expanduser("~/.cache/huggingface"),
     )
-    print(f"  │  ✅ Inflect {variant} model cached")
+    print(f"  │  ✅ Inflect ${variant} model cached")
 except Exception as e:
     print(f"  │  ⚠️  Inflect download failed: {e}")
     sys.exit(1)
