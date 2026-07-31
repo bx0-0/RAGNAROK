@@ -266,7 +266,7 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
 
 ## 🎙️ Text-to-Speech (TTS)
 
-Two engines available via plugin system — add more without editing existing code.
+Two engines available via plugin system.
 
 ### OmniVoice (Default)
 
