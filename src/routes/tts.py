@@ -15,7 +15,7 @@ from fastapi.responses import Response
 from src.models.tts import SpeechRequest
 from src.gc import ModelGC
 from src.tts import get_engine_class, available_engines
-from src.logging import logger
+from src.logging import log_request_start, log_request, logger
 from src.config import TTS_ENABLED, TTS_MAX_CHARS
 
 router = APIRouter(prefix='/v1/audio')
@@ -68,7 +68,10 @@ async def speech(request: SpeechRequest, req: Request):
 
     t0 = time.monotonic()
 
-    # Route to the right engine
+    # Log request start for verbose log
+    req_id = req.headers.get('x-request-id', req.headers.get('x-requested-with', 'tts'))
+    await log_request_start(req_id, 'POST', '/v1/audio/speech',
+                             extra=f'model={request.model}, chars={len(request.input)}')
     engine_name = request.model
     if engine_name not in available_engines():
         return Response(
@@ -114,7 +117,14 @@ async def speech(request: SpeechRequest, req: Request):
     # Touch GC so engine stays alive while in use
     _get_gc().touch(engine_name)
 
-    elapsed = round(time.monotonic() - t0, 2)
+    elapsed = round(time.monotonic() - t0, 3)
+
+    await log_request(
+        req_id, 'POST', '/v1/audio/speech',
+        HTTPStatus.OK, elapsed, int(t0), int(time.monotonic()),
+        extra=f'{engine_name} {len(audio_bytes):,}B',
+    )
+
     logger.info(
         f'TTS {engine_name}: {len(request.input)} chars → '
         f'{len(audio_bytes):,} bytes in {elapsed}s'
