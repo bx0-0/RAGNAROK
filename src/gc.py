@@ -51,9 +51,9 @@ class ModelGC:
 
     # ── singleton ────────────────────────────────────────────────
     @classmethod
-    def get(cls) -> 'ModelGC':
+    def get(cls, idle_timeout: float = 600.0, sweep_interval: float = 60.0) -> 'ModelGC':
         if cls._instance is None:
-            cls._instance = cls()
+            cls._instance = cls(idle_timeout=idle_timeout, sweep_interval=sweep_interval)
         return cls._instance
 
     # ── lifecycle ────────────────────────────────────────────────

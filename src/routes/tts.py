@@ -19,7 +19,14 @@ from src.logging import logger
 from src.config import TTS_ENABLED, TTS_MAX_CHARS
 
 router = APIRouter(prefix='/v1/audio')
-_gc = ModelGC.get()
+_gc = None  # set lazily — ModelGC singleton is created in server lifespan
+
+
+def _get_gc():
+    global _gc
+    if _gc is None:
+        _gc = ModelGC.get()
+    return _gc
 
 
 async def _get_or_load_engine(name: str):
@@ -28,7 +35,8 @@ async def _get_or_load_engine(name: str):
     eng = cls.get()
 
     # Register with GC on first use
-    await _gc.register(
+    gc = _get_gc()
+    await gc.register(
         name=name,
         kind=f'tts_{name}',
         unload_fn=eng.unload,
@@ -104,7 +112,7 @@ async def speech(request: SpeechRequest, req: Request):
         )
 
     # Touch GC so engine stays alive while in use
-    _gc.touch(engine_name)
+    _get_gc().touch(engine_name)
 
     elapsed = round(time.monotonic() - t0, 2)
     logger.info(
@@ -139,17 +147,17 @@ async def unload_tts(req: Request):
 
     if not name:
         # Unload all TTS engines
-        freed = await _gc.unload_all()
+        freed = await _get_gc().unload_all()
         return {'unloaded': True, 'models_freed': freed}
 
-    ok = await _gc.unload(name)
+    ok = await _get_gc().unload(name)
     return {'unloaded': ok, 'model': name}
 
 
 @router.get('/engines')
 async def list_engines():
     """List available TTS engines."""
-    gc_status = await _gc.status()
+    gc_status = await _get_gc().status()
     return {
         'available': available_engines(),
         'status': gc_status,
