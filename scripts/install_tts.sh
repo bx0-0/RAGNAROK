@@ -3,10 +3,6 @@
 # Install TTS engine models (OmniVoice + Inflect)
 # Called from start.sh — errors are non-fatal so the server still starts
 #
-# Inflect: install separately on Kaggle:
-#   pip install --upgrade huggingface_hub
-#   hf download owensong/Inflect-Micro-v2 --local-dir Inflect-Micro-v2
-#   cd Inflect-Micro-v2 \u0026\u0026 pip install -r requirements.txt
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,7 +15,7 @@ NC='\033[0m'
 echo ""
 echo -e "${BOLD}${WHITE}[2.5/4]${NC} ${DIM}Preparing TTS models...${NC}"
 
-if [ "$TTS_ENABLED" != "true" ] \u0026\u0026 [ "$TTS_ENABLED" != "True" ]; then
+if [ "$TTS_ENABLED" != "true" ] && [ "$TTS_ENABLED" != "True" ]; then
     echo "  └─ Skipped (TTS disabled)"
     exit 0
 fi
@@ -52,7 +48,7 @@ else
     echo -e "  │  ${YELLOW}ℹ️  OmniVoice model download failed — TTS endpoint will return an error until models are installed${NC}"
 fi
 
-# --- Inflect model download ---
+# --- Inflect model download & install ---
 echo ""
 variant="${TTS_INFLECT_VARIANT:-nano}"
 repo="owensong/Inflect-Nano-v2"
@@ -60,30 +56,35 @@ if [ "$variant" = "micro" ]; then
     repo="owensong/Inflect-Micro-v2"
 fi
 
-echo "  ├─ Downloading Inflect ${variant} model ..."
+echo "  ├─ Installing Inflect ${variant} ..."
 
 inflect_ok=1
+INSTALL_DIR="/kaggle/working/Inflect-${variant^}"
 python3 << PYEOF
-import os, sys
+import os, sys, subprocess
 try:
-    from huggingface_hub import snapshot_download
-    cache = snapshot_download(
-        repo_id="$repo",
-        cache_dir=os.path.expanduser("~/.cache/huggingface"),
-    )
-    print(f"  │  ✅ Inflect ${variant} model cached")
+    from huggingface_hub import hf_hub_download, snapshot_download
+    install_dir = "$INSTALL_DIR"
+    snapshot_download(repo_id="$repo", local_dir=install_dir)
+    print(f"  │  ✅ Inflect ${variant} downloaded to {install_dir}")
 except Exception as e:
     print(f"  │  ⚠️  Inflect download failed: {e}")
     sys.exit(1)
 PYEOF
-if [ $? -ne 0 ]; then
-    inflect_ok=0
-fi
-
-if [ "$inflect_ok" -eq 1 ]; then
-    echo "  │  ✅ Inflect ready"
+if [ $? -eq 0 ]; then
+    echo "  │  Installing Inflect dependencies ..."
+    cd "$INSTALL_DIR" && pip install -q -r requirements.txt 2>/dev/null
+    if [ $? -eq 0 ]; then
+        echo "  │  ✅ Inflect ${variant} installed"
+        # Set env var so inflect_engine.py can find the model dir
+        export TTS_INFLECT_MODEL_DIR="$INSTALL_DIR"
+    else
+        echo -e "  │  ${YELLOW}⚠️  pip install failed — Inflect may not work${NC}"
+        inflect_ok=0
+    fi
 else
-    echo -e "  │  ${YELLOW}ℹ️  Inflect model download failed — TTS endpoint will return an error until models are installed${NC}"
+    inflect_ok=0
+    echo -e "  │  ${YELLOW}⚠️  Inflect download failed — TTS endpoint will return an error${NC}"
 fi
 
 echo ""
