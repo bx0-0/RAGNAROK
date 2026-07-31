@@ -14,9 +14,9 @@ from fastapi.responses import Response
 
 from src.models.tts import SpeechRequest
 from src.gc import ModelGC
-from ..tts import get_engine_class, available_engines
-from ..logging import logger
-from ...config import TTS_ENABLED, TTS_MAX_CHARS
+from src.tts import get_engine_class, available_engines
+from src.logging import logger
+from src.config import TTS_ENABLED, TTS_MAX_CHARS
 
 router = APIRouter(prefix='/v1/audio')
 _gc = ModelGC.get()
