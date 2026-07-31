@@ -46,12 +46,13 @@ class InflectEngine(AbstractTTSEngine):
         import os
         import sys
 
-        # Prefer local install path (set by install_tts.sh)
-        model_dir = None
-        model_dir_file = '/tmp/inflect_model_dir.txt'
-        if os.path.exists(model_dir_file):
-            with open(model_dir_file) as f:
-                model_dir = f.read().strip()
+        # Check env var (set by start.sh) then file, fallback to HF cache
+        model_dir = os.environ.get('TTS_INFLECT_MODEL_DIR')
+        if not model_dir:
+            model_dir_file = '/tmp/inflect_model_dir.txt'
+            if os.path.exists(model_dir_file):
+                with open(model_dir_file) as f:
+                    model_dir = f.read().strip()
 
         if not model_dir:
             from huggingface_hub import snapshot_download
