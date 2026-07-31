@@ -43,20 +43,23 @@ class InflectEngine(AbstractTTSEngine):
 
         logger.info(f'Loading InflectTTS ({self.variant}) ...')
 
+        import os
+        import sys
+        from huggingface_hub import snapshot_download
+
+        repo_id = 'owensong/Inflect-Micro-v2' if self.variant == 'micro' else 'owensong/Inflect-Nano-v2'
+        model_dir = snapshot_download(repo_id=repo_id)
+        sys.path.insert(0, model_dir)
+
         try:
             from inference import InflectTTS  # noqa: F811
-            import os
-            repo_id = 'owensong/Inflect-Micro-v2' if self.variant == 'micro' else 'owensong/Inflect-Nano-v2'
-            from huggingface_hub import snapshot_download
-            model_dir = snapshot_download(repo_id=repo_id)
-            self._model = InflectTTS(model_dir, device="cpu")
+            self._model = InflectTTS(model_dir, device='cpu')
             self._loaded = True
             logger.info('InflectTTS loaded successfully')
-        except ImportError:
+        except ImportError as exc:
             raise RuntimeError(
-                'InflectTTS is not installed. Install from:\n'
-                '  git clone https://github.com/owenawsong/Inflect.git\n'
-                '  cd Inflect \u0026\u0026 pip install -r requirements.txt'
+                f'InflectTTS requires installing inference from the model repo. '
+                f'Run: cd {model_dir} && pip install -r requirements.txt'
             )
 
     async def unload(self) -> None:
