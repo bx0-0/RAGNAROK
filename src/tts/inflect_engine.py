@@ -45,10 +45,19 @@ class InflectEngine(AbstractTTSEngine):
 
         import os
         import sys
-        from huggingface_hub import snapshot_download
 
-        repo_id = 'owensong/Inflect-Micro-v2' if self.variant == 'micro' else 'owensong/Inflect-Nano-v2'
-        model_dir = snapshot_download(repo_id=repo_id)
+        # Prefer local install path (set by install_tts.sh)
+        model_dir = None
+        model_dir_file = '/tmp/inflect_model_dir.txt'
+        if os.path.exists(model_dir_file):
+            with open(model_dir_file) as f:
+                model_dir = f.read().strip()
+
+        if not model_dir:
+            from huggingface_hub import snapshot_download
+            repo_id = 'owensong/Inflect-Micro-v2' if self.variant == 'micro' else 'owensong/Inflect-Nano-v2'
+            model_dir = snapshot_download(repo_id=repo_id)
+
         sys.path.insert(0, model_dir)
 
         try:

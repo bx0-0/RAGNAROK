@@ -76,8 +76,8 @@ if [ $? -eq 0 ]; then
     cd "$INSTALL_DIR" && pip install -q -r requirements.txt 2>/dev/null
     if [ $? -eq 0 ]; then
         echo "  │  ✅ Inflect ${variant} installed"
-        # Set env var so inflect_engine.py can find the model dir
-        export TTS_INFLECT_MODEL_DIR="$INSTALL_DIR"
+        # Write model path so the engine can find it
+        echo "$INSTALL_DIR" > /tmp/inflect_model_dir.txt
     else
         echo -e "  │  ${YELLOW}⚠️  pip install failed — Inflect may not work${NC}"
         inflect_ok=0
