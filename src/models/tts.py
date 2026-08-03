@@ -13,7 +13,7 @@ class SpeechRequest(BaseModel):
     response_format: str = 'wav'                # wav | mp3 (wav default for now)
 
     # OmniVoice params — send per-request or use defaults below
-    voice_instruct: str = 'male, young adult, clear'   # e.g. "male, young adult, british accent"
+    voice_instruct: str = 'male, young adult'         # e.g. "male, british accent"
     num_step: int = Field(default=16, ge=8, le=32)              # diffusion steps
     guidance_scale: float = Field(default=2.0, ge=0.1, le=5.0)
 
