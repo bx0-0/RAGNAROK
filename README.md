@@ -271,6 +271,21 @@ Two engines available via plugin system.
 bash start.sh --model qwen3.5:9b
 ```
 
+#### OmniVoice `voice_instruct` values
+
+The `voice_instruct` field accepts comma-separated English or Chinese tags (mix neither).
+
+**English items:**
+`american accent`, `australian accent`, `british accent`, `canadian accent`, `child`, `chinese accent`, `elderly`, `female`, `high pitch`, `indian accent`, `japanese accent`, `korean accent`, `low pitch`, `male`, `middle-aged`, `moderate pitch`, `portuguese accent`, `russian accent`, `teenager`, `very high pitch`, `very low pitch`, `whisper`, `young adult`
+
+**Chinese items:**
+`东北话`, `中年`, `中音调`, `云南话`, `低音调`, `儿童`, `四川话`, `女`, `宁夏话`, `少年`, `极低音调`, `极高音调`, `桂林话`, `河南话`, `济南话`, `甘肃话`, `男`, `石家庄话`, `老年`, `耳语`, `贵州话`, `陕西话`, `青岛话`, `青年`, `高音调`
+
+**Rules:**
+- Use only English **or** only Chinese — never mix
+- English: join with `, ` (comma + space), e.g. `'male, young adult'`
+- Chinese: join with `，` (full-width comma), e.g. `'男，中年'`
+
 ### Inflect v2
 
 - **English only**, runs on CPU
@@ -294,7 +309,7 @@ curl -X POST https://YOUR-URL.trycloudflare.com/v1/audio/speech \
   -d '{
     "model": "omnivoice",
     "input": "السلام عليكم ورحمة الله",
-    "voice_instruct": "male, deep voice, calm",
+    "voice_instruct": "male, young adult",
     "speed": 0.9,
     "num_step": 24
   }' --output out.wav
@@ -309,7 +324,7 @@ client = OpenAI(
 resp = client.audio.speech.create(
     model="omnivoice",
     input="Hello world!",
-    voice_instruct="female, cheerful, british accent",
+    voice_instruct="female, british accent",
     speed=1.2,
 )
 resp.write_to_file("speech.wav")
