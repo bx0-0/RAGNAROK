@@ -6,7 +6,7 @@ import orjson
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from src.config import MODEL_NAME, OLLAMA_BASE_URL
+from src.config import MODEL_NAME
 from src.state import _get_state
 from src.logging import log_request_start, log_request
 from src.utils import _read_body, _fast_id
