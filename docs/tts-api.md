@@ -39,7 +39,21 @@ All engine parameters are sent in the request body. No CLI args needed for per-r
 
 ---
 
-## OmniVoice Voice Design Reference
+## OmniVoice
+
+**Repository:** [k2-fsa/OmniVoice](https://huggingface.co/k2-fsa/OmniVoice)
+- **Size:** ~612 MB
+- **Languages:** 600+ (Arabic, Japanese, Korean, Chinese, English…)
+- **Device:** GPU recommended (`cuda`), also works on CPU (slow)
+- **PyPI package:** `omnivoice>=0.2.1`
+
+## Inflect v2
+
+**Repository:** [owensong/Inflect-Nano-v2](https://huggingface.co/owensong/Inflect-Nano-v2) or [Micro](https://huggingface.co/owensong/Inflect-Micro-v2)
+- **Size:** Nano ~16 MB / Micro ~38 MB
+- **Language:** English only
+- **Device:** CPU-friendly, no GPU needed
+- **Install:** `snapshot_download` + `pip install -r requirements.txt` from model dir
 
 The `voice_instruct` field accepts comma-separated English or Chinese tags. **Never mix languages.**
 

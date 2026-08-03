@@ -10,6 +10,8 @@ Any model from the [Ollama library](https://ollama.com/library). Just specify th
 bash start.sh --model qwen3.6:35b
 ```
 
+Browse models: **[ollama.com/library](https://ollama.com/library)**
+
 ### 2. HuggingFace GGUF Models
 
 Pull any GGUF model directly from HF with a quantization tag. This is great for models not in Ollama's library:
@@ -21,6 +23,17 @@ bash start.sh --model hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:Q8_0
 > ⚠️ **GPU size matters.** Colab free tier has 15GB VRAM — only models that fit will load. Kaggle offers 30GB VRAM for larger models. Check model quantization sizes before pulling.
 
 Browse [bartowski GGUF repos](https://huggingface.co/bartowski) for heavily optimized quantized models.
+
+---
+
+## Model Sources Quick Links
+
+| Source | Link | Description |
+|---|---|---|
+| Ollama Library | [ollama.com/library](https://ollama.com/library) | Official model hub, auto-pulled by `start.sh` |
+| OmniVoice | [k2-fsa/OmniVoice](https://huggingface.co/k2-fsa/OmniVoice) | 600+ languages, GPU TTS (~612MB) |
+| Inflect Nano | [owensong/Inflect-Nano-v2](https://huggingface.co/owensong/Inflect-Nano-v2) | English only, CPU TTS (~16MB) |
+| Inflect Micro | [owensong/Inflect-Micro-v2](https://huggingface.co/owensong/Inflect-Micro-v2) | English only, CPU TTS (~38MB) |
 
 ---
 
