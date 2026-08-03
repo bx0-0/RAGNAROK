@@ -174,13 +174,6 @@ GC_SWEEP_INTERVAL=60                # GC check interval in seconds
 | `--tts-engine <name>` | Default engine: `omnivoice` or `inflect` | `omnivoice` |
 | `--tts-device <gpu>` | OmniVoice device: `cuda` or `cpu` | `cuda` |
 | `--tts-variant <v>` | Inflect variant: `nano` or `micro` | `nano` |
-| `--omni-instruct "str"` | Voice design string (gender, age, accent…) | `male, young adult, clear` |
-| `--omni-num-step <n>` | Diffusion steps 8 (fast) → 32 (quality) | `16` |
-| `--omni-speed <f>` | Playback speed 0.25–4.0 | `1.0` |
-| `--omni-guidance <f>` | Guidance scale 0.1–5.0 | `2.0` |
-| `--inflect-speed <f>` | Playback speed 0.5–2.0 | `1.0` |
-| `--inflect-var <f>` | Prosody variation 0.0–1.0 | `0.667` |
-| `--inflect-seed <n>` | Reproducibility seed | `7` |
 | `--gc-timeout <s>` | GC idle eviction timeout (seconds) | `600` |
 | `--debug` | Enable debug logging | off |
 | `--verbose-log` | Live request log in terminal | off |
@@ -275,10 +268,7 @@ Two engines available via plugin system.
 - Runs on GPU (`cuda`) by default
 
 ```bash
-bash start.sh --model qwen3.5:9b \
-  --omni-instruct "female, middle-aged, warm" \
-  --omni-num-step 24 \
-  --omni-guidance 2.5
+bash start.sh --model qwen3.5:9b
 ```
 
 ### Inflect v2
@@ -290,14 +280,12 @@ bash start.sh --model qwen3.5:9b \
 ```bash
 bash start.sh --model qwen3.5:9b \
   --tts-engine inflect \
-  --tts-variant micro \
-  --inflect-speed 1.2 \
-  --inflect-var 0.8
+  --tts-variant micro
 ```
 
 ### API Usage
 
-All parameters are configurable via `settings.env`, CLI flags, or per-request body:
+All engine parameters are sent in the request body:
 
 ```bash
 # POST /v1/audio/speech
