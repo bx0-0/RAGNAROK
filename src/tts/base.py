@@ -1,7 +1,6 @@
 """Abstract interface for all TTS engines."""
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 
 class AbstractTTSEngine(ABC):

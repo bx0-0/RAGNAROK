@@ -31,7 +31,7 @@ from src.config import (
 from src.state import GatewayState, _warmup
 from src.gc import ModelGC
 from src.routes import register_routers
-from src.logging import setup_logging, logger, _open_log_fh, _log_fh as _gw_log_fh
+from src.logging import logger, _open_log_fh, _log_fh as _gw_log_fh
 
 
 @contextlib.asynccontextmanager
