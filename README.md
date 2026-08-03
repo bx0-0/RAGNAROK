@@ -17,7 +17,10 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![Kaggle](https://img.shields.io/badge/runs%20on-Kaggle-20BEFF)](https://www.kaggle.com)
 [![Colab](https://img.shields.io/badge/runs%20on-Colab-F9AB00)](https://colab.research.google.com)
-[![TTS](https://img.shields.io/badge/TTS-OmniVoice%20%2B%20Inflect-purple.svg)](docs/tts-api.md)
+[![TTS](https://img.shields.io/badge/TTS-OmniVoice%20%7C%20Inflect-purple.svg)](docs/tts-api.md)
+[![Ollama](https://img.shields.io/badge/Powered%20by-Ollama-white.svg?logo=ollama&labelColor=white)](https://ollama.com)
+[![OmniVoice](https://img.shields.io/badge/OmniVoice-600%2B_Langs-blue.svg)](https://huggingface.co/k2-fsa/OmniVoice)
+[![Inflect](https://img.shields.io/badge/Inflect-CPU_English-orange.svg)](https://huggingface.co/owensong/Inflect-Nano-v2)
 [![GC](https://img.shields.io/badge/GC-Auto%20Eviction-green.svg)]()
 
 </div>
