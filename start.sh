@@ -19,7 +19,7 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config/settings.env"
 
-MODEL_NAME="qwen3:8b"
+MODEL_NAME="qwen3.5:9b"
 MAX_CONCURRENT=1
 NUM_CTX=16384
 NUM_PREDICT=16384
@@ -30,6 +30,14 @@ KEEP_ALIVE="60m"
 PORT=8000
 DEBUG_MODE=False
 VERBOSE_LOG=False
+TTS_ENABLED=True
+TTS_DEFAULT_ENGINE=omnivoice
+TTS_OMNIVOICE_DEVICE=cuda
+TTS_INFLECT_VARIANT=nano
+TTS_MAX_CHARS=5000
+# OmniVoice & Inflect param defaults live in src/models/tts.py (per-request)
+GC_IDLE_TIMEOUT=600
+GC_SWEEP_INTERVAL=60
 
 if [ -f "$CONFIG_FILE" ]; then
     echo -e "${CYAN}📄 Loading config from $CONFIG_FILE${NC}"
@@ -58,14 +66,26 @@ while [[ $# -gt 0 ]]; do
         --num-gpu)        NUM_GPU="$2"; shift 2 ;;
         --keep-alive)     KEEP_ALIVE="$2"; shift 2 ;;
         --port)           PORT="$2"; shift 2 ;;
+        --tts-enabled)    TTS_ENABLED="$2"; shift 2 ;;
+        --tts-engine)     TTS_DEFAULT_ENGINE="$2"; shift 2 ;;
+        --tts-device)     TTS_OMNIVOICE_DEVICE="$2"; shift 2 ;;
+        --tts-variant)    TTS_INFLECT_VARIANT="$2"; shift 2 ;;
+        --tts-max-chars)  TTS_MAX_CHARS="$2"; shift 2 ;;
+        --gc-timeout)     GC_IDLE_TIMEOUT="$2"; shift 2 ;;
         --debug)          DEBUG_MODE=True; shift ;;
         --verbose-log)    VERBOSE_LOG="$2"; shift 2 ;;
         --help)
             echo "Usage: bash start.sh [OPTIONS]"
             echo "  --model <model1> [model2] ...   Model(s) to load"
-            echo "                                  Regular: qwen3:8b, llama3.3:70b"
+            echo "                                  Regular: qwen3.5:9b, llama3.3:70b"
             echo "                                  HuggingFace GGUF: hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF"
             echo "                                              hf.co/user/repo:Q8_0"
+            echo "  --tts-enabled <true|false>       Enable TTS endpoint (default: true)"
+            echo "  --tts-engine <omnivoice|inflect> Default TTS engine (default: omnivoice)"
+            echo "  --tts-device <cuda|cpu>          OmniVoice device (default: cuda)"
+            echo "  --tts-variant <nano|micro>       Inflect variant (default: nano)"
+            echo "  --tts-max-chars <n>             Max chars per TTS request (default: 5000)"
+            echo "  --gc-timeout <seconds>           GC idle eviction timeout (default: 600)"
             exit 0
             ;;
         *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
@@ -90,6 +110,8 @@ done
 
 export MODEL_NAME FIRST_MODEL MAX_CONCURRENT NUM_CTX NUM_PREDICT NUM_BATCH
 export FLASH_ATTN NUM_GPU KEEP_ALIVE PORT DEBUG_MODE VERBOSE_LOG
+export TTS_ENABLED TTS_DEFAULT_ENGINE TTS_OMNIVOICE_DEVICE TTS_INFLECT_VARIANT TTS_MAX_CHARS
+export GC_IDLE_TIMEOUT GC_SWEEP_INTERVAL
 export SERVER_LOG_FILE TUNNEL_LOG_FILE URL_FILE OLLAMA_PULL_LOG REQUEST_LOG_FILE
 
 clear
@@ -120,6 +142,16 @@ bash "$SCRIPT_DIR/scripts/setup.sh"
 # ─── Step 2 ───
 echo -e "${BOLD}${WHITE}[2/4]${NC} ${DIM}Preparing Ollama & model(s)...${NC}"
 bash "$SCRIPT_DIR/scripts/install_model.sh"
+
+# ─── Step 2.5 — TTS models (non-fatal) ───
+if [ "$TTS_ENABLED" = "true" ] || [ "$TTS_ENABLED" = "True" ]; then
+    echo ""
+    bash "$SCRIPT_DIR/scripts/install_tts.sh" 2>/dev/null || true
+    # Read Inflect model path into env var so engine finds it without re-downloading
+    if [ -f /tmp/inflect_model_dir.txt ]; then
+        export TTS_INFLECT_MODEL_DIR="$(cat /tmp/inflect_model_dir.txt)"
+    fi
+fi
 
 # ─── Step 3 ───
 echo -e "${BOLD}${WHITE}[3/4]${NC} ${DIM}Starting FastAPI server...${NC}"

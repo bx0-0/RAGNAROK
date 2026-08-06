@@ -36,7 +36,7 @@ else
 fi
 
 echo "  ├─ Installing Python packages..."
-pip install -q -r requirements.txt
+pip install -q -r requirements.txt 2>/dev/null
 
 echo "  ├─ Downloading cloudflared..."
 if [ ! -f "cloudflared" ] || [ ! -x "cloudflared" ]; then

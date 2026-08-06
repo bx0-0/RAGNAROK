@@ -3,7 +3,7 @@
 import os
 
 # ─── Model config ───
-_RAW_MODEL_LIST = os.environ.get("MODEL_NAME", "qwen3:8b").split()
+_RAW_MODEL_LIST = os.environ.get("MODEL_NAME", "qwen3.5:9b").split()
 _SHORT_ALIASES = {name: name.split("/", 3)[-1] for name in _RAW_MODEL_LIST if name.startswith("hf.co/")}
 _MODEL_LIST = [_SHORT_ALIASES.get(m, m) for m in _RAW_MODEL_LIST]
 MODEL_NAME = _MODEL_LIST[0]  # Default = first model
@@ -12,7 +12,7 @@ MODEL_NAME = _MODEL_LIST[0]  # Default = first model
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", "2"))
 NUM_CTX = int(os.environ.get("NUM_CTX", "16384"))
 NUM_PREDICT = int(os.environ.get("NUM_PREDICT", "16384"))
-NUM_BATCH = int(os.environ.get("NUM_BATCH", "2444"))
+NUM_BATCH = int(os.environ.get("NUM_BATCH", "500"))
 FLASH_ATTN = os.environ.get("FLASH_ATTN", "True").lower() in ("true", "1", "yes")
 NUM_GPU = int(os.environ.get("NUM_GPU", "-1"))
 KEEP_ALIVE = os.environ.get("KEEP_ALIVE", "60m")
@@ -21,6 +21,19 @@ PORT = int(os.environ.get("PORT", "8000"))
 # ─── Ollama config ───
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
+
+# ─── TTS config ───
+TTS_ENABLED = os.environ.get("TTS_ENABLED", "True").lower() in ("true", "1", "yes")
+TTS_DEFAULT_ENGINE = os.environ.get("TTS_DEFAULT_ENGINE", "omnivoice")  # omnivoice | inflect
+TTS_OMNIVOICE_DEVICE = os.environ.get("TTS_OMNIVOICE_DEVICE", "cuda")  # cuda | cpu
+TTS_INFLECT_VARIANT = os.environ.get("TTS_INFLECT_VARIANT", "nano")    # nano | micro
+TTS_MAX_CHARS = int(os.environ.get("TTS_MAX_CHARS", "5000"))
+# OmniVoice & Inflect param defaults are in src/models/tts.py — sent per-request
+
+# ─── GC config ───
+GC_IDLE_TIMEOUT = float(os.environ.get("GC_IDLE_TIMEOUT", "600.0"))  # 10 min default
+GC_SWEEP_INTERVAL = float(os.environ.get("GC_SWEEP_INTERVAL", "60.0"))  # 1 min default
+
 
 # ─── Logging config ───
 VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
