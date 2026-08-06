@@ -23,13 +23,3 @@ _BAD_JSON_RESPONSE = Response(
 def build_sse_error_frame(message: str, error_type: str = "server_error") -> bytes:
     """Build a single SSE data frame containing an error payload."""
     return b"data: " + orjson.dumps({"error": {"message": message, "type": error_type}}) + b"\n\n"
-
-
-def build_json_response(status_code: int, message: str,
-                        error_type: str = "server_error") -> Response:
-    """Build a standard JSON error response."""
-    return Response(
-        status_code=status_code,
-        content=orjson.dumps({"error": {"message": message, "type": error_type}}),
-        media_type="application/json",
-    )

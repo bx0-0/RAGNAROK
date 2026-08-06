@@ -24,10 +24,14 @@ from src.config import (
     MAX_CONNECTIONS,
     MAX_KEEPALIVE_CONNECTIONS,
     KEEPALIVE_EXPIRY,
+    TTS_ENABLED,
+    GC_IDLE_TIMEOUT,
+    GC_SWEEP_INTERVAL,
 )
 from src.state import GatewayState, _warmup
+from src.gc import ModelGC
 from src.routes import register_routers
-from src.logging import setup_logging, logger, _open_log_fh, _log_fh as _gw_log_fh
+from src.logging import logger, _open_log_fh, _log_fh as _gw_log_fh
 
 
 @contextlib.asynccontextmanager
@@ -48,6 +52,11 @@ async def lifespan(app: FastAPI):
     app.state.gw = state
     _open_log_fh()
 
+    # Start ModelGC background sweep
+    gc = ModelGC.get(idle_timeout=GC_IDLE_TIMEOUT, sweep_interval=GC_SWEEP_INTERVAL)
+    await gc.start()
+    app.state.gc = gc
+
     banner = (
         f"\n{'='*60}\n"
         f"  \033[1m\033[0;31m🐉 RAGNAROK\033[0m\n"
@@ -58,6 +67,8 @@ async def lifespan(app: FastAPI):
         f"  \033[0;90mPort:\033[0m      {PORT}\n"
         f"  \033[0;90mConcurrent:\033[0m {MAX_CONCURRENT}\n"
         f"  \033[0;90mContext:\033[0m   {NUM_CTX}\n"
+        f"  \033[0;90mTTS enabled:\033[0m {TTS_ENABLED}\n"
+        f"  \033[0;90mGC timeout:\033[0m  {GC_IDLE_TIMEOUT:.0f}s\n"
         f"{'='*60}\n"
     )
     print(banner, flush=True)
@@ -71,6 +82,8 @@ async def lifespan(app: FastAPI):
         with contextlib.suppress(asyncio.CancelledError):
             await task
     await state.http_client.aclose()
+    # Stop GC and unload all transient models on shutdown
+    await gc.stop()
     if _gw_log_fh is not None:
         _gw_log_fh.flush()
         _gw_log_fh.close()

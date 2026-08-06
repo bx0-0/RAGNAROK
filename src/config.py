@@ -22,6 +22,19 @@ PORT = int(os.environ.get("PORT", "8000"))
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 
+# ─── TTS config ───
+TTS_ENABLED = os.environ.get("TTS_ENABLED", "True").lower() in ("true", "1", "yes")
+TTS_DEFAULT_ENGINE = os.environ.get("TTS_DEFAULT_ENGINE", "omnivoice")  # omnivoice | inflect
+TTS_OMNIVOICE_DEVICE = os.environ.get("TTS_OMNIVOICE_DEVICE", "cuda")  # cuda | cpu
+TTS_INFLECT_VARIANT = os.environ.get("TTS_INFLECT_VARIANT", "nano")    # nano | micro
+TTS_MAX_CHARS = int(os.environ.get("TTS_MAX_CHARS", "5000"))
+# OmniVoice & Inflect param defaults are in src/models/tts.py — sent per-request
+
+# ─── GC config ───
+GC_IDLE_TIMEOUT = float(os.environ.get("GC_IDLE_TIMEOUT", "600.0"))  # 10 min default
+GC_SWEEP_INTERVAL = float(os.environ.get("GC_SWEEP_INTERVAL", "60.0"))  # 1 min default
+
+
 # ─── Logging config ───
 VERBOSE_LOG = os.environ.get("VERBOSE_LOG", "True").lower() in ("true", "1", "yes")
 REQUEST_LOG_FILE = os.environ.get("REQUEST_LOG_FILE", "/tmp/gateway-requests.log")

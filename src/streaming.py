@@ -18,7 +18,6 @@ from src.sse import (
     make_sse_frames,
     build_done_chunk,
 )
-from src.config import KEEP_ALIVE, OLLAMA_BASE_URL
 from src.errors import build_sse_error_frame
 
 # These are read from server at runtime; we avoid importing them to prevent circular deps.
