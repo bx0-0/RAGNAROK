@@ -16,7 +16,7 @@ from src.models.tts import SpeechRequest
 from src.gc import ModelGC
 from src.tts import get_engine_class, available_engines
 from src.logging import log_request_start, log_request, logger
-from src.config import TTS_ENABLED, TTS_MAX_CHARS
+from src.config import TTS_ENABLED, TTS_MAX_CHARS, TTS_MIN_GPU_FREE_GB
 
 router = APIRouter(prefix='/v1/audio')
 _gc = None  # set lazily — ModelGC singleton is created in server lifespan
@@ -88,6 +88,40 @@ async def speech(request: SpeechRequest, req: Request):
             status_code=HTTPStatus.NOT_IMPLEMENTED,
             media_type='text/plain',
         )
+
+    # ── GPU memory guard for GPU engines ─────────────────────────────
+    if eng.device == 'cuda':
+        try:
+            import torch
+        except Exception:
+            logger.warning('torch not available — skipping GPU memory check')
+        else:
+            if torch.cuda.is_available():
+                total = torch.cuda.get_device_properties(0).total_memory
+                reserved = torch.cuda.memory_reserved(0)
+                allocated = torch.cuda.memory_allocated(0)
+                free = total - reserved
+                free_gb = free / (1024 ** 3)
+                min_gb = TTS_MIN_GPU_FREE_GB
+                if free_gb < min_gb:
+                    logger.warning(
+                        f'GPU memory low: {free_gb:.2f} GB free < {min_gb} GB. Unloading LLMs...'
+                    )
+                    # Free GPU by unloading idle LLMs
+                    gc = _get_gc()
+                    # Try unload all (or specific LLM unloading logic)
+                    await gc.unload_all()  # or call specific LLM unload
+                    # Re-check after unload
+                    reserved2 = torch.cuda.memory_reserved(0)
+                    free2 = total - reserved2
+                    free_gb2 = free2 / (1024 ** 3)
+                    if free_gb2 < min_gb:
+                        return Response(
+                            content=f'GPU memory insufficient ({free_gb2:.2f} GB free < {min_gb} GB). '
+                                   f'Unload large models or increase VRAM.',
+                            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                            media_type='text/plain',
+                        )
 
     # Build kwargs passed to engine.synthesize()
     kwargs = {

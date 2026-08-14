@@ -30,8 +30,12 @@ class OmniVoiceEngine(AbstractTTSEngine):
 
     def __init__(self, model_name: str = DEFAULT_MODEL, device: str = 'cuda'):
         self.model_name = model_name
-        self.device = device
+        self._device = device
         self._extra_kwargs: Dict[str, Any] = {}
+
+    @property
+    def device(self) -> str:
+        return self._device
 
     # ── class-level singleton ───────────────────────────────────────
     @classmethod

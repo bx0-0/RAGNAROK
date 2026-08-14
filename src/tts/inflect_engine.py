@@ -27,6 +27,10 @@ class InflectEngine(AbstractTTSEngine):
         self.variant = variant  # 'nano' or 'micro'
         self._extra_kwargs: Dict[str, Any] = {}
 
+    @property
+    def device(self) -> str:
+        return 'cpu'
+
     @classmethod
     def get(cls, variant: str = 'nano') -> 'InflectEngine':
         if cls._instance is None or cls._instance.variant != variant:

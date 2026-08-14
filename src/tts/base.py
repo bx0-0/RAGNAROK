@@ -6,6 +6,11 @@ from abc import ABC, abstractmethod
 class AbstractTTSEngine(ABC):
     """Base class for TTS backends."""
 
+    @property
+    @abstractmethod
+    def device(self) -> str:
+        """Device used by this engine: 'cuda' or 'cpu'."""
+
     @abstractmethod
     async def synthesize(self, text: str, **kwargs) -> bytes:
         """Return raw audio bytes."""

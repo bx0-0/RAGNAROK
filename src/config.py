@@ -28,6 +28,7 @@ TTS_DEFAULT_ENGINE = os.environ.get("TTS_DEFAULT_ENGINE", "omnivoice")  # omnivo
 TTS_OMNIVOICE_DEVICE = os.environ.get("TTS_OMNIVOICE_DEVICE", "cuda")  # cuda | cpu
 TTS_INFLECT_VARIANT = os.environ.get("TTS_INFLECT_VARIANT", "nano")    # nano | micro
 TTS_MAX_CHARS = int(os.environ.get("TTS_MAX_CHARS", "5000"))
+TTS_MIN_GPU_FREE_GB = float(os.environ.get("TTS_MIN_GPU_FREE_GB", "7"))
 # OmniVoice & Inflect param defaults are in src/models/tts.py — sent per-request
 
 # ─── GC config ───
