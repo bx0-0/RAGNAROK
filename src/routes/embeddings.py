@@ -9,7 +9,7 @@ from fastapi.responses import Response
 from src.config import MODEL_NAME
 from src.state import _get_state
 from src.logging import log_request_start, log_request
-from src.utils import _read_body, _fast_id
+from src.utils.helpers import _read_body, _fast_id
 
 router = APIRouter()
 

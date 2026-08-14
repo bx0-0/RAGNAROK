@@ -11,7 +11,7 @@ import ollama
 from fastapi.responses import StreamingResponse
 
 from src.logging import logger, log_request
-from src.utils import _fast_id
+from src.utils.helpers import _fast_id
 from src.sse import (
     _SSE_DONE,
     _SSE_KEEPALIVE,

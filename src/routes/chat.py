@@ -17,7 +17,7 @@ from src.config import (
 )
 from src.state import _get_state
 from src.logging import log_request_start, log_request, logger
-from src.utils import (
+from src.utils.helpers import (
     convert_messages_to_ollama,
     format_tool_calls_openai,
     _read_body,
