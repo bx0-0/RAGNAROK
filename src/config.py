@@ -37,6 +37,8 @@ TTS_MIN_GPU_FREE_GB = float(os.environ.get("TTS_MIN_GPU_FREE_GB", "7"))
 # Unknown values fall back to True (thinking on, model default level).
 THINK_LEVEL_MAP = {
     "none": False,
+    "off": False,
+    "false": False,
     "minimal": "low",
     "low": "low",
     "medium": "medium",
