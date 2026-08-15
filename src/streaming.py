@@ -41,6 +41,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
     prompt_tokens = completion_tokens = 0
     released = False
     retry_count = 0
+    stream_error = None  # tracked for the live request log
 
     # ── Build chat kwargs from the ollama payload dict ──
     chat_kwargs = {
@@ -52,6 +53,8 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
         chat_kwargs["keep_alive"] = ollama_payload["keep_alive"]
     if ollama_payload.get("options"):
         chat_kwargs["options"] = ollama_payload["options"]
+    if "think" in ollama_payload:
+        chat_kwargs["think"] = ollama_payload["think"]
     if ollama_payload.get("tools"):
         chat_kwargs["tools"] = ollama_payload["tools"]
     # NB: ollama lib does not accept tool_choice kwarg; the API itself
@@ -282,9 +285,11 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 raise  # propagate to outer handler
             except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout) as e:
                 died_mid_stream = True
+                stream_error = f"{type(e).__name__}: {str(e)[:60]}"
                 logger.error(f"[{request_id}] Ollama connection error: {e}")
                 break
             except Exception as e:
+                stream_error = f"{type(e).__name__}: {str(e)[:60]}"
                 logger.error(f"[{request_id}] Stream loop error: {e}")
                 break
             else:
@@ -334,8 +339,10 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         retry_count += 1
                         if retry_count <= MAX_RETRIES:
                             await asyncio.sleep(2)
+                            stream_error = None  # reset — retry may succeed
                             continue  # retry
                         # retries exhausted
+                        stream_error = stream_error or f"model crashed mid-generation after {retry_count} attempts"
                         yield build_sse_error_frame("Upstream model crashed mid-generation", "upstream_error")
                         yield build_done_chunk(
                             request_id_str, created, active_model,
@@ -349,6 +356,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         if _should_retry_empty() and retry_count <= MAX_RETRIES:
                             yield _SSE_KEEPALIVE
                             await asyncio.sleep(1)
+                            stream_error = None  # reset — retry may succeed
                             continue  # retry the request
                         # Either retries disabled or exhausted — yield valid empty completion
                         yield build_done_chunk(
@@ -379,6 +387,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             return
         except ollama.ResponseError as e:
             elapsed = round(time.monotonic() - start_time, 2)
+            stream_error = f"Ollama {e.status_code}: {str(e.error)[:60]}"
             logger.error(f"[{request_id}] Ollama ResponseError {e.status_code}: {e.error}")
             yield build_sse_error_frame(str(e.error)[:100], "upstream_error")
             yield build_done_chunk(
@@ -388,6 +397,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             yield _SSE_DONE
             return
         except Exception as e:
+            stream_error = f"CRASH {type(e).__name__}: {str(e)[:60]}"
             logger.error(f"[{request_id}] STREAM CRASH: {e}")
             yield build_sse_error_frame("Internal server error", "server_error")
             yield build_done_chunk(
@@ -402,9 +412,16 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 state.semaphore.release()
                 elapsed = round(time.monotonic() - start_time, 2)
                 try:
-                    await log_request(request_id, "POST", "/v1/chat/completions", 200,
-                                      elapsed, prompt_tokens, completion_tokens, "STREAM")
-                    logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
+                    if stream_error:
+                        # Make Ollama/upstream errors visible in the live request log
+                        await log_request(request_id, "POST", "/v1/chat/completions", 500,
+                                          elapsed, prompt_tokens, completion_tokens,
+                                          f"ERR:{stream_error[:40]}")
+                        logger.warning(f"[{request_id}] Done {elapsed}s ERROR | {stream_error}")
+                    else:
+                        await log_request(request_id, "POST", "/v1/chat/completions", 200,
+                                          elapsed, prompt_tokens, completion_tokens, "STREAM")
+                        logger.info(f"[{request_id}] Done {elapsed}s | P:{prompt_tokens} C:{completion_tokens}")
                 except asyncio.CancelledError:
                     logger.warning(
                         f"[{request_id}] Cancelled before logging | {elapsed}s "

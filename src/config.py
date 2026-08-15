@@ -31,6 +31,19 @@ TTS_MAX_CHARS = int(os.environ.get("TTS_MAX_CHARS", "5000"))
 TTS_MIN_GPU_FREE_GB = float(os.environ.get("TTS_MIN_GPU_FREE_GB", "7"))
 # OmniVoice & Inflect param defaults are in src/models/tts.py — sent per-request
 
+# ─── Reasoning effort mapping ───
+# Client value (lowercase) → Ollama `think` value.
+# Add new levels here when Ollama supports them — single edit point.
+# Unknown values fall back to True (thinking on, model default level).
+THINK_LEVEL_MAP = {
+    "none": False,
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "high",
+}
+
 # ─── GC config ───
 GC_IDLE_TIMEOUT = float(os.environ.get("GC_IDLE_TIMEOUT", "600.0"))  # 10 min default
 GC_SWEEP_INTERVAL = float(os.environ.get("GC_SWEEP_INTERVAL", "60.0"))  # 1 min default

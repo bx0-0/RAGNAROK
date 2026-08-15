@@ -21,6 +21,8 @@ Same as [OpenAI API](https://platform.openai.com/docs/api-reference/chat):
 | `stream` | boolean | ❌ | Enable SSE streaming (default: `false`) |
 | `max_tokens` | integer | ❌ | Max tokens to generate |
 | `tools` | array | ❌ | OpenAI-compatible tool/function definitions |
+| `reasoning_effort` | string | ❌ | Thinking level: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` |
+| `thinking` | boolean | ❌ | Enable/disable thinking (bool models). `reasoning_effort` wins if both set |
 
 ### Example
 
@@ -30,9 +32,29 @@ curl -X POST https://YOUR-URL/v1/chat/completions \
   -d '{
     "model": "qwen3.5:9b",
     "messages": [{"role": "user", "content": "Write a haiku about GPUs"}],
-    "stream": true
+    "stream": true,
+    "reasoning_effort": "low"
   }'
 ```
+
+### Reasoning Effort
+
+`reasoning_effort` maps to Ollama's top-level `think` field. Mapping lives in one place — `THINK_LEVEL_MAP` in `src/config.py` — so adding a new level is a one-line edit:
+
+| Client sends | Ollama `think` | Notes |
+|---|---|---|
+| `"none"` | `false` | thinking off |
+| `"minimal"` | `"low"` | |
+| `"low"` | `"low"` | |
+| `"medium"` | `"medium"` | |
+| `"high"` | `"high"` | |
+| `"xhigh"` | `"high"` | |
+| anything else | `true` | model default level |
+| *(omitted)* | *(omitted)* | Ollama uses the model default |
+
+The reasoning trace comes back as `reasoning_content` on the message (non-stream) or as `delta.reasoning_content` chunks (stream), interleaved before the final content — same as DeepSeek/OpenAI-style APIs.
+
+> Models without thinking support simply ignore the field. Requires `ollama>=0.5.0` client.
 
 ---
 

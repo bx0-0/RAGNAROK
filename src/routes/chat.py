@@ -51,8 +51,6 @@ async def openai_completions(request: Request):
     request_id = _fast_id()
     start_time = time.monotonic()
 
-    await log_request_start(request_id, "POST", "/v1/chat/completions")
-
     # Atomic semaphore — reject immediately if busy
     try:
         await asyncio.wait_for(state.semaphore.acquire(), timeout=0.05)
@@ -91,6 +89,13 @@ async def openai_completions(request: Request):
 
     ollama_payload_dict = chat_req.to_ollama_payload(active_model, KEEP_ALIVE, dict(_OLLAMA_OPTS), ollama_messages)
 
+    # Live log extra — include think level when set
+    think_val = ollama_payload_dict.get("think")
+    log_extra = f"Client={client_name} | Msgs={msg_count}"
+    if think_val is not None and think_val is not False:
+        log_extra += f" | Think={think_val}"
+    await log_request_start(request_id, "POST", "/v1/chat/completions", extra=log_extra)
+
     created = int(time.time())
     if not chat_req.stream:
         try:
@@ -128,9 +133,11 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
             "keep_alive": ollama_payload.get("keep_alive"),
             "options": ollama_payload.get("options"),
         }
+        if "think" in ollama_payload:
+            chat_kwargs["think"] = ollama_payload["think"]
         if "tools" in ollama_payload:
             chat_kwargs["tools"] = ollama_payload["tools"]
-        # NOTE: tool_choice not supported by ollama.AsyncClient.chat() in v0.4.x
+        # NOTE: tool_choice not supported by ollama.AsyncClient.chat();
         # Model handles tool selection automatically when tools are present
 
         response = await state.http_client.chat(**chat_kwargs)

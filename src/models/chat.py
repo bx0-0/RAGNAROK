@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, field_validator
 
 from src.models.shared import ChatMessage
+from src.config import THINK_LEVEL_MAP
 
 
 class ToolFunction(BaseModel):
@@ -33,7 +34,10 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     tools: list[Tool] | None = None
     tool_choice: str | None = None
-    thinking: bool = False
+    # None = model default (don't send `think` to Ollama)
+    thinking: bool | None = None
+    # OpenAI/DeepSeek-style: none | minimal | low | medium | high | xhigh
+    reasoning_effort: str | None = None
 
     def to_ollama_payload(
         self,
@@ -43,14 +47,23 @@ class ChatCompletionRequest(BaseModel):
         messages_converted: list[dict],
     ) -> dict[str, Any]:
         """Convert this request into an Ollama chat kwargs dict."""
-        # tool_choice: ollama.AsyncClient.chat() ignores this kwarg in v0.4.x;
+        # tool_choice: ollama.AsyncClient.chat() ignores this kwarg;
         # the model handles tool selection automatically when tools are present.
         payload = {
             "model": active_model,
             "messages": messages_converted,
             "keep_alive": keep_alive,
-            "options": {**ollama_opts, "thinking": {"enabled": self.thinking}},
+            "options": dict(ollama_opts),
         }
+        # ── think: top-level Ollama field (not options.thinking) ──
+        # reasoning_effort wins over thinking if both are set.
+        # Levels are mapped via THINK_LEVEL_MAP (src/config.py) — single edit point.
+        # If neither is set, `think` is omitted → Ollama uses the model default.
+        if self.reasoning_effort is not None:
+            level = self.reasoning_effort.strip().lower()
+            payload["think"] = THINK_LEVEL_MAP.get(level, True)
+        elif self.thinking is not None:
+            payload["think"] = self.thinking
         if self.tools:
             payload["tools"] = [t.model_dump() for t in self.tools]
         return payload
