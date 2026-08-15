@@ -11,7 +11,7 @@ import ollama
 from fastapi.responses import StreamingResponse
 
 from src.logging import logger, log_request
-from src.utils.helpers import _fast_id
+from src.utils.helpers import fast_id
 from src.sse import (
     _SSE_DONE,
     _SSE_KEEPALIVE,
@@ -19,6 +19,7 @@ from src.sse import (
     build_done_chunk,
 )
 from src.errors import build_sse_error_frame
+from src.models.chat import build_chat_kwargs
 
 # These are read from server at runtime; we avoid importing them to prevent circular deps.
 # They're passed via config dict instead.
@@ -43,22 +44,8 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
     retry_count = 0
     stream_error = None  # tracked for the live request log
 
-    # ── Build chat kwargs from the ollama payload dict ──
-    chat_kwargs = {
-        "model": ollama_payload["model"],
-        "messages": ollama_payload["messages"],
-        "stream": True,
-    }
-    if ollama_payload.get("keep_alive"):
-        chat_kwargs["keep_alive"] = ollama_payload["keep_alive"]
-    if ollama_payload.get("options"):
-        chat_kwargs["options"] = ollama_payload["options"]
-    if "think" in ollama_payload:
-        chat_kwargs["think"] = ollama_payload["think"]
-    if ollama_payload.get("tools"):
-        chat_kwargs["tools"] = ollama_payload["tools"]
-    # NB: ollama lib does not accept tool_choice kwarg; the API itself
-    # defaults to "auto" when tools are provided, which is correct behavior.
+    # ── Shared kwargs builder (single source of truth for chat kwargs) ──
+    chat_kwargs = build_chat_kwargs(ollama_payload, stream=True)
 
     # ── Immediate ping so client doesn't timeout while we wait for Ollama ──
     yield _SSE_KEEPALIVE
@@ -219,7 +206,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                             is_write_tool = tc_name == "write"
                             formatted.append({
                                 "index": tool_call_index,
-                                "id": getattr(tc, "id", None) or f"call_{_fast_id()}",
+                                "id": getattr(tc, "id", None) or f"call_{fast_id()}",
                                 "type": "function",
                                 "function": {
                                     "name": tc_name,

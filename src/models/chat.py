@@ -67,3 +67,29 @@ class ChatCompletionRequest(BaseModel):
         if self.tools:
             payload["tools"] = [t.model_dump() for t in self.tools]
         return payload
+
+
+def build_chat_kwargs(payload: dict[str, Any], stream: bool = False) -> dict[str, Any]:
+    """Build the ollama.AsyncClient.chat() kwargs dict from an Ollama payload.
+
+    Single source of truth so the non-stream (routes/chat.py) and stream
+    (streaming.py) paths cannot drift apart. Only keys present in ``payload``
+    are forwarded; ``stream`` is always set.
+
+    NB: ``tool_choice`` is intentionally NOT forwarded — the ollama client
+    does not accept it, and Ollama defaults to "auto" when tools are present.
+    """
+    kwargs: dict[str, Any] = {
+        "model": payload["model"],
+        "messages": payload["messages"],
+        "stream": stream,
+    }
+    if payload.get("keep_alive"):
+        kwargs["keep_alive"] = payload["keep_alive"]
+    if payload.get("options"):
+        kwargs["options"] = payload["options"]
+    if "think" in payload:
+        kwargs["think"] = payload["think"]
+    if payload.get("tools"):
+        kwargs["tools"] = payload["tools"]
+    return kwargs

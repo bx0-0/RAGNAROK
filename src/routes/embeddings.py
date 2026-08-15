@@ -9,7 +9,7 @@ from fastapi.responses import Response
 from src.config import MODEL_NAME
 from src.state import _get_state
 from src.logging import log_request_start, log_request
-from src.utils.helpers import _read_body, _fast_id
+from src.utils.helpers import read_body, fast_id
 
 router = APIRouter()
 
@@ -17,12 +17,12 @@ router = APIRouter()
 @router.post("/v1/embeddings")
 async def openai_embeddings(request: Request):
     state = _get_state(request)
-    request_id = _fast_id()
+    request_id = fast_id()
     start_time = time.monotonic()
     await log_request_start(request_id, "POST", "/v1/embeddings")
 
     try:
-        body = orjson.loads(await _read_body(request))
+        body = orjson.loads(await read_body(request))
     except Exception:
         await log_request(request_id, "POST", "/v1/embeddings", 400, 0, 0, 0, "BAD_JSON")
         return Response(status_code=400, content=b'{"error":"Invalid JSON"}', media_type="application/json")

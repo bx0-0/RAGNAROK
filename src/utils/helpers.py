@@ -6,7 +6,7 @@ from fastapi import Request
 from src.logging import logger
 
 
-def _fast_id():
+def fast_id():
     return os.urandom(4).hex()
 
 
@@ -150,7 +150,7 @@ def format_tool_calls_openai(ollama_tcs):
                     args = "{}"
             openai_tcs.append({
                 "index": idx,
-                "id": tc.get("id") or f"call_{_fast_id()}",
+                "id": tc.get("id") or f"call_{fast_id()}",
                 "type": "function",
                 "function": {
                     "name": func.get("name", ""),
@@ -163,7 +163,7 @@ def format_tool_calls_openai(ollama_tcs):
 
 
 # ─── Chunked body reader (avoids buffering huge prompts in RAM) ───
-async def _read_body(request: Request, max_size_mb: int = 50) -> bytes:
+async def read_body(request: Request, max_size_mb: int = 50) -> bytes:
     """Read request body without loading >max_size_mb all at once.
     Returns raw bytes. Raises ValueError if Content-Length exceeds limit."""
     content_length = request.headers.get("content-length")

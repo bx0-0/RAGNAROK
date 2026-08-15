@@ -15,7 +15,9 @@ _RATE_LIMIT_RESPONSE = Response(
 
 _BAD_JSON_RESPONSE = Response(
     status_code=400,
-    content=b'{"error":"Invalid JSON"}',
+    content=orjson.dumps({
+        "error": {"message": "Invalid JSON", "type": "invalid_request_error"},
+    }),
     media_type="application/json",
 )
 

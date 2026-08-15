@@ -20,11 +20,11 @@ from src.logging import log_request_start, log_request, logger
 from src.utils.helpers import (
     convert_messages_to_ollama,
     format_tool_calls_openai,
-    _read_body,
-    _fast_id,
+    read_body,
+    fast_id,
 )
 from src.errors import _RATE_LIMIT_RESPONSE, _BAD_JSON_RESPONSE
-from src.models.chat import ChatCompletionRequest
+from src.models.chat import ChatCompletionRequest, build_chat_kwargs
 from src.streaming import handle_stream
 
 router = APIRouter()
@@ -48,7 +48,7 @@ async def openai_completions(request: Request):
             media_type="application/json",
         )
 
-    request_id = _fast_id()
+    request_id = fast_id()
     start_time = time.monotonic()
 
     # Atomic semaphore — reject immediately if busy
@@ -61,7 +61,7 @@ async def openai_completions(request: Request):
 
     # ── Parse + validate via Pydantic model ──
     try:
-        raw = orjson.loads(await _read_body(request))
+        raw = orjson.loads(await read_body(request))
         chat_req = ChatCompletionRequest(**raw)
     except Exception:
         state.semaphore.release()
@@ -126,21 +126,9 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
     prompt_tokens = completion_tokens = 0
 
     try:
-        chat_kwargs = {
-            "model": ollama_payload["model"],
-            "messages": ollama_payload["messages"],
-            "stream": False,
-            "keep_alive": ollama_payload.get("keep_alive"),
-            "options": ollama_payload.get("options"),
-        }
-        if "think" in ollama_payload:
-            chat_kwargs["think"] = ollama_payload["think"]
-        if "tools" in ollama_payload:
-            chat_kwargs["tools"] = ollama_payload["tools"]
-        # NOTE: tool_choice not supported by ollama.AsyncClient.chat();
-        # Model handles tool selection automatically when tools are present
-
-        response = await state.http_client.chat(**chat_kwargs)
+        response = await state.http_client.chat(
+            **build_chat_kwargs(ollama_payload, stream=False)
+        )
 
         msg = response.message
         if msg.content:
