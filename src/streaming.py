@@ -3,6 +3,7 @@
 import os
 import time
 import asyncio
+from dataclasses import dataclass
 
 import orjson
 import httpx
@@ -31,14 +32,188 @@ def _should_retry_empty() -> bool:
     return os.environ.get("RETRY_ON_EMPTY", "False").lower() in ("true", "1", "yes")
 
 
+@dataclass
+class _ParsedChunk:
+    """Normalized, serializable view of one Ollama streaming chunk.
+
+    Built by `_parse_chunk` from the raw ollama object so all the messy
+    extraction (content shape, thinking, tool-call formatting) lives in one
+    pure, unit-testable place. `tool_calls` is a list only when the chunk
+    carries them (else empty); `content`/`thinking` are always str.
+    """
+    content: str = ""
+    thinking: str = ""
+    tool_calls: list = None  # populated (non-empty) when the chunk has tool calls
+    done: bool = False
+    prompt_eval_count: int = 0
+    eval_count: int = 0
+    done_reason: str = ""
+
+
+def _format_tool_calls(tool_calls, tool_call_index: int) -> list:
+    """Convert Ollama tool_calls objects to the OpenAI delta shape.
+
+    `tool_call_index` is the next index to assign; the return value is a
+    2-tuple is avoided (to keep it trivially testable) — instead the list of
+    formatted dicts is returned and the caller increments its own counter by
+    `len(formatted)`.
+    """
+    formatted = []
+    for tc in tool_calls:
+        if tc is None:
+            continue
+        tc_func = getattr(tc, "function", None)
+        if tc_func is None:
+            tc_name = "?"
+            tc_args_json = "{}"
+        else:
+            tc_name = getattr(tc_func, "name", "?") or "?"
+            tc_args = getattr(tc_func, "arguments", None) or ""
+            if isinstance(tc_args, str):
+                tc_args_json = tc_args
+            else:
+                tc_args_json = orjson.dumps(tc_args).decode() if tc_args else "{}"
+        formatted.append({
+            "index": tool_call_index + len(formatted),
+            "id": getattr(tc, "id", None) or f"call_{fast_id()}",
+            "type": "function",
+            "function": {
+                "name": tc_name,
+                "arguments": tc_args_json,
+            },
+        })
+    return formatted
+
+
+def _parse_chunk(chunk) -> _ParsedChunk:
+    """Extract the fields we care about from one Ollama chunk.
+
+    Pure: reads attributes off the chunk, no I/O, no server, no mutation.
+    Handles the `content` shape variants (str or list-of-parts) and the
+    `thinking` field uniformly so the main loop stays simple.
+    """
+    msg = chunk.message
+    if msg is None:
+        # Ollama's empty final chunk — no payload
+        return _ParsedChunk()
+
+    content = msg.content or ""
+    if isinstance(content, list):
+        content = " ".join(
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+
+    thinking = getattr(msg, "thinking", "") or ""
+
+    tool_calls = msg.tool_calls
+    formatted = []
+    if tool_calls:
+        formatted = _format_tool_calls(tool_calls, 0)
+
+    return _ParsedChunk(
+        content=content,
+        thinking=thinking,
+        tool_calls=formatted,
+        done=bool(chunk.done),
+        prompt_eval_count=chunk.prompt_eval_count or 0,
+        eval_count=chunk.eval_count or 0,
+        done_reason=chunk.done_reason or "",
+    )
+
+
+class _StreamBatcher:
+    """Accumulates reasoning/content deltas and emits batched SSE frames.
+
+    Owns the "first chunk gets role" invariant and the batching buffer so the
+    main loop never has to juggle those locals itself. `tool_call_index` is
+    owned here too — the next index to assign to a new tool call.
+    """
+
+    def __init__(self, sfx: bytes, efx: bytes):
+        self._sfx = sfx
+        self._efx = efx
+        self._first = True
+        self._content: list = []
+        self._thinking: list = []
+        self.tool_call_index = 0
+
+    # -- introspection ------------------------------------------------------
+    def _delta(self, extra: dict | None = None) -> dict:
+        delta = {}
+        if self._first:
+            delta["role"] = "assistant"
+            self._first = False
+        if self._thinking:
+            delta["reasoning_content"] = "".join(self._thinking)
+        if self._content:
+            delta["content"] = "".join(self._content)
+        if extra:
+            delta.update(extra)
+        return delta
+
+    def dirty(self) -> bool:
+        """True if there is unflushed reasoning/content buffered."""
+        return bool(self._content or self._thinking)
+
+    def content_len(self) -> int:
+        return len("".join(self._content))
+
+    def thinking_len(self) -> int:
+        return len("".join(self._thinking))
+
+    def reset(self) -> None:
+        """Clear buffered text/thinking (keeps the first-frame flag and the
+        tool_call_index). Called at the start of each retry attempt."""
+        self._content.clear()
+        self._thinking.clear()
+
+    # -- emission -----------------------------------------------------------
+    def flush(self) -> bytes | None:
+        """Emit a buffered delta frame and clear the buffer. None if empty."""
+        if not self._content and not self._thinking:
+            return None
+        delta = self._delta()
+        self._content.clear()
+        self._thinking.clear()
+        return self._sfx + orjson.dumps(delta) + self._efx
+
+    def emit(self, extra: dict) -> bytes | None:
+        """Emit a delta frame carrying *extra* keys (e.g. tool_calls).
+
+        Any buffered text/thinking is folded into the same frame first, then
+        the buffer is cleared — a tool call and its preceding text ship together.
+        """
+        if not self._content and not self._thinking and not extra:
+            return None
+        delta = self._delta(extra)
+        self._content.clear()
+        self._thinking.clear()
+        return self._sfx + orjson.dumps(delta) + self._efx
+
+    def add(self, parsed: _ParsedChunk) -> None:
+        """Accumulate a parsed chunk's text/thinking into the buffer.
+
+        Tool calls are NOT accumulated — they force an immediate flush via
+        `emit`; the caller handles those separately.
+        """
+        if parsed.content:
+            self._content.append(parsed.content)
+        if parsed.thinking:
+            self._thinking.append(parsed.thinking)
+
+
 async def stream_generator(state, request_id, ollama_payload, start_time,
                            request_id_str, created, active_model, max_stream_s,
                            ollama_chat_url, sfx, efx):
     """Core async generator that yields SSE frames from Ollama's streaming API."""
 
-    first_chunk = True
+    # _StreamBatcher owns the "first frame gets role" invariant and the
+    # tool_call_index counter (both persist across retries, as before); the
+    # text/thinking buffer is reset at the start of each retry attempt.
+    batcher = _StreamBatcher(sfx, efx)
     has_tool_calls = False
-    tool_call_index = 0
     prompt_tokens = completion_tokens = 0
     released = False
     retry_count = 0
@@ -65,29 +240,18 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             yield _SSE_KEEPALIVE
 
             # ── Token batching ──
-            batch_content: list[str] = []
-            batch_thinking: list[str] = []
+            batcher.reset()  # clear any buffer left from a previous retry
             batch_timer = time.monotonic()
             chunks_captured = 0
             died_mid_stream = False
             graceful = False
 
             def _flush_batch():
-                nonlocal batch_content, batch_thinking, first_chunk, batch_timer
-                if not batch_content and not batch_thinking:
-                    return None
-                delta: dict = {}
-                if first_chunk:
-                    delta["role"] = "assistant"
-                    first_chunk = False
-                if batch_thinking:
-                    delta["reasoning_content"] = "".join(batch_thinking)
-                if batch_content:
-                    delta["content"] = "".join(batch_content)
-                batch_content.clear()
-                batch_thinking.clear()
-                batch_timer = time.monotonic()
-                return sfx + orjson.dumps(delta) + efx
+                nonlocal batch_timer
+                frame = batcher.flush()
+                if frame is not None:
+                    batch_timer = time.monotonic()
+                return frame
 
             try:
                 # ── Queue-based consumer — single task drives the async generator ──
@@ -159,73 +323,28 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
 
                     chunks_captured += 1
 
-                    msg = chunk.message
-                    if msg is None:
-                        # Empty final chunk — done
+                    if chunk.message is None:
+                        # Empty final chunk — no payload to process
                         continue
 
-                    # ── Extract content ──
-                    content = msg.content or ""
-                    if isinstance(content, list):
-                        content = " ".join(
-                            item.get("text", "")
-                            for item in content
-                            if isinstance(item, dict) and item.get("type") == "text"
-                        )
+                    parsed = _parse_chunk(chunk)
 
-                    # ── Extract thinking ──
-                    thinking = getattr(msg, "thinking", "") or ""
-
-                    # ── Accumulate into batch (guard against None) ──
-                    if thinking:
-                        batch_thinking.append(thinking)
-                    if content:
-                        batch_content.append(content)
+                    # ── Accumulate text/thinking into the batcher ──
+                    batcher.add(parsed)
 
                     should_flush = False
 
                     # ── Tool calls force immediate flush ──
-                    tool_calls = msg.tool_calls
-                    if tool_calls:  # guard against None
+                    if parsed.tool_calls:
                         has_tool_calls = True
-                        formatted = []
-                        for tc in tool_calls:
-                            if tc is None:
-                                continue
-                            tc_func = getattr(tc, "function", None)
-                            if tc_func is None:
-                                tc_name = "?"
-                                tc_args_json = "{}"
-                            else:
-                                tc_name = getattr(tc_func, "name", "?") or "?"
-                                tc_args = getattr(tc_func, "arguments", None) or ""
-                                if isinstance(tc_args, str):
-                                    tc_args_json = tc_args
-                                else:
-                                    tc_args_json = orjson.dumps(tc_args).decode() if tc_args else "{}"
-                            is_write_tool = tc_name == "write"
-                            formatted.append({
-                                "index": tool_call_index,
-                                "id": getattr(tc, "id", None) or f"call_{fast_id()}",
-                                "type": "function",
-                                "function": {
-                                    "name": tc_name,
-                                    "arguments": tc_args_json,
-                                },
-                            })
-                            tool_call_index += 1
-
-                        # Flush buffered text first, then yield tool call
+                        # Flush buffered text first, then emit the tool-call delta.
                         frame = _flush_batch()
                         if frame:
                             yield frame
+                        formatted = _format_tool_calls(parsed.tool_calls, batcher.tool_call_index)
+                        batcher.tool_call_index += len(formatted)
                         try:
-                            delta: dict = {}
-                            if first_chunk:
-                                delta["role"] = "assistant"
-                                first_chunk = False
-                            delta["tool_calls"] = formatted
-                            yield sfx + orjson.dumps(delta) + efx
+                            yield sfx + orjson.dumps(batcher._delta({"tool_calls": formatted})) + efx
                         except Exception as ex:
                             logger.error(f"[{request_id}] Tool call serialize failed: {ex}")
                         should_flush = True
@@ -284,7 +403,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 logger.warning(
                     f"[{request_id}] Stream loop exited | graceful={graceful} "
                     f"chunks_captured={chunks_captured} died_mid_stream={died_mid_stream} "
-                    f"content_buf={len(''.join(batch_content))} thinking_buf={len(''.join(batch_thinking))} "
+                    f"content_buf={batcher.content_len()} thinking_buf={batcher.thinking_len()} "
                     f"has_tool_calls={has_tool_calls} prompt_tokens={prompt_tokens} "
                     f"completion_tokens={completion_tokens}"
                 )
