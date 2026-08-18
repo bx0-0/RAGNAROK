@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from src.config import _MODEL_LIST
+from src.config import _MODEL_LIST, MODEL_NUM_CTX
 
 router = APIRouter()
 
@@ -15,5 +15,6 @@ async def list_models():
             "id": model,
             "object": "model",
             "owned_by": "local",
+            "context_length": MODEL_NUM_CTX.get(model),
         } for model in _MODEL_LIST],
     }
