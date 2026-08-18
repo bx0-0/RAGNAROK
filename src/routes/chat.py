@@ -10,9 +10,8 @@ from fastapi.responses import Response
 from src.config import (
     MODEL_NAME,
     KEEP_ALIVE,
-    OLLAMA_BASE_URL,
     MAX_STREAM_SECONDS,
-    _OLLAMA_OPTS,
+    model_opts,
     _MODEL_LIST,
 )
 from src.state import _get_state
@@ -87,7 +86,7 @@ async def openai_completions(request: Request):
         has_tools=bool(chat_req.tools),
     )
 
-    ollama_payload_dict = chat_req.to_ollama_payload(active_model, KEEP_ALIVE, dict(_OLLAMA_OPTS), ollama_messages)
+    ollama_payload_dict = chat_req.to_ollama_payload(active_model, KEEP_ALIVE, model_opts(active_model), ollama_messages)
 
     # Live log extra — include think level when set
     think_val = ollama_payload_dict.get("think")
@@ -116,7 +115,7 @@ async def openai_completions(request: Request):
             state.semaphore.release()
     else:
         return handle_stream(state, request_id, ollama_payload_dict, start_time, active_model,
-                            MAX_STREAM_SECONDS, OLLAMA_BASE_URL + "/api/chat")
+                            MAX_STREAM_SECONDS)
 
 
 async def _handle_non_stream(state, request_id, ollama_payload, start_time, created, active_model):

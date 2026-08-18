@@ -1,6 +1,6 @@
 """Unit tests for the extracted streaming helpers.
 
-These cover `_parse_chunk` and `_StreamBatcher` — the two pieces that were
+These cover `_parse_chunk` and `StreamBatcher` — the two pieces that were
 pulled out of `stream_generator` so they can be tested in isolation (no
 server, no I/O). They do NOT drive the full generator; that is exercised
 end-to-end in test_tool_calls.py / test_live.py.
@@ -11,8 +11,8 @@ from src.streaming import (
     _ParsedChunk,
     _parse_chunk,
     _format_tool_calls,
-    _StreamBatcher,
 )
+from src.batcher import StreamBatcher
 
 
 # ── tiny fakes mirroring the ollama chunk shape ──────────────────────────
@@ -73,9 +73,9 @@ def test_parse_tool_calls_formatted():
     assert p.tool_calls[1]["id"].startswith("call_")  # generated when absent
 
 
-# ── _StreamBatcher ───────────────────────────────────────────────────────
+# ── StreamBatcher ───────────────────────────────────────────────────────
 def test_batcher_first_frame_gets_role_then_content():
-    b = _StreamBatcher(b"pre", b"\n\n")
+    b = StreamBatcher(b"pre", b"\n\n")
     b.add(_parse_chunk(_chunk(content="He")))
     b.add(_parse_chunk(_chunk(content="llo")))
     frame = b.flush()
@@ -85,7 +85,7 @@ def test_batcher_first_frame_gets_role_then_content():
 
 
 def test_batcher_second_frame_has_no_role():
-    b = _StreamBatcher(b"", b"")
+    b = StreamBatcher(b"", b"")
     b.add(_parse_chunk(_chunk(content="first")))
     b.flush()
     b.add(_parse_chunk(_chunk(content="second")))
@@ -95,13 +95,13 @@ def test_batcher_second_frame_has_no_role():
 
 
 def test_batcher_flush_empty_returns_none():
-    b = _StreamBatcher(b"", b"")
+    b = StreamBatcher(b"", b"")
     assert b.flush() is None
     assert b.dirty() is False
 
 
 def test_batcher_accumulates_thinking_and_content():
-    b = _StreamBatcher(b"", b"")
+    b = StreamBatcher(b"", b"")
     b.add(_parse_chunk(_chunk(content="c", thinking="t")))
     frame = b.flush()
     assert b"reasoning_content" in frame
@@ -109,7 +109,7 @@ def test_batcher_accumulates_thinking_and_content():
 
 
 def test_batcher_reset_keeps_first_flag():
-    b = _StreamBatcher(b"", b"")
+    b = StreamBatcher(b"", b"")
     b.add(_parse_chunk(_chunk(content="stale")))
     b.reset()
     assert b.dirty() is False

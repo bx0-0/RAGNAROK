@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.config import (
     MODEL_NAME,
     MAX_CONCURRENT,
-    NUM_CTX,
+    MODEL_NUM_CTX,
     OLLAMA_BASE_URL,
     PORT,
     _MODEL_LIST,
@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
         f"  \033[0;90mDefault:\033[0m   {MODEL_NAME}\n"
         f"  \033[0;90mPort:\033[0m      {PORT}\n"
         f"  \033[0;90mConcurrent:\033[0m {MAX_CONCURRENT}\n"
-        f"  \033[0;90mContext:\033[0m   {NUM_CTX}\n"
+        f"  \033[0;90mContext:\033[0m   {MODEL_NUM_CTX}\n"
         f"  \033[0;90mTTS enabled:\033[0m {TTS_ENABLED}\n"
         f"  \033[0;90mGC timeout:\033[0m  {GC_IDLE_TIMEOUT:.0f}s\n"
         f"{'='*60}\n"

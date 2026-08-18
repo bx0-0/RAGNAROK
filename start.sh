@@ -59,7 +59,7 @@ while [[ $# -gt 0 ]]; do
             done
             ;;
         --max-concurrent) MAX_CONCURRENT="$2"; shift 2 ;;
-        --num-ctx)        NUM_CTX="$2"; shift 2 ;;
+        --num-ctx)        NUM_CTX=""; shift; while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do NUM_CTX="${NUM_CTX}${NUM_CTX:+ }$1"; shift; done ;;
         --num-predict)    NUM_PREDICT="$2"; shift 2 ;;
         --num-batch)      NUM_BATCH="$2"; shift 2 ;;
         --flash-attn)     FLASH_ATTN="$2"; shift 2 ;;
@@ -77,9 +77,21 @@ while [[ $# -gt 0 ]]; do
         --help)
             echo "Usage: bash start.sh [OPTIONS]"
             echo "  --model <model1> [model2] ...   Model(s) to load"
-            echo "                                  Regular: qwen3.5:9b, llama3.3:70b"
+            echo "                                  Regular: qwen3.5:9b, llama3.1:8b"
             echo "                                  HuggingFace GGUF: hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF"
             echo "                                              hf.co/user/repo:Q8_0"
+            echo "  --num-ctx <ctx...>               Context size."
+            echo "                                  One value applies to all models."
+            echo "                                  Or provide one value per model."
+            echo "  --max-concurrent <n>          Max simultaneous requests (default: 2)"
+            echo "  --num-predict <n>             Max tokens to generate per response (default: 16384)"
+            echo "  --num-batch <n>               Decoding batch size (default: 500)"
+            echo "  --flash-attn <true|false>     Flash attention (default: true)"
+            echo "  --num-gpu <n>                 GPU layers, -1 = all (default: -1)"
+            echo "  --keep-alive <dur>            Keep model in RAM after idle (default: 60m)"
+            echo "  --port <n>                    FastAPI port (default: 8000)"
+            echo "  --debug                       Enable debug-level logging"
+            echo "  --verbose-log <true|false>    Live request log to terminal (default: false)"
             echo "  --tts-enabled <true|false>       Enable TTS endpoint (default: true)"
             echo "  --tts-engine <omnivoice|inflect> Default TTS engine (default: omnivoice)"
             echo "  --tts-device <cuda|cpu>          OmniVoice device (default: cuda)"

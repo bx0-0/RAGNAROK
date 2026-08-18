@@ -5,6 +5,9 @@ Tests full tool-use lifecycle: request → tool call → inject result → final
 
 import json
 import time
+import socket
+from urllib.parse import urlparse
+
 import httpx
 import pytest
 
@@ -13,6 +16,18 @@ BASE = "https://hawaiian-greatly-ata-respondents.trycloudflare.com/v1"
 TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds between retries on 429
+
+pytestmark = pytest.mark.live
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _gateway_reachable():
+    """Skip the whole live module if the gateway host won't accept a TCP connect."""
+    host = urlparse(BASE).hostname
+    try:
+        socket.create_connection((host, 443), timeout=5).close()
+    except OSError as e:
+        pytest.skip(f"gateway {host}:443 unreachable — skipping live tests ({e})")
 
 
 @pytest.fixture(scope="module")

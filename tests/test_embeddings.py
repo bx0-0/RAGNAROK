@@ -1,9 +1,15 @@
 """Live integration tests for the /v1/embeddings endpoint.
 Run: pytest tests/test_embeddings.py -v
 Requires an embedding model loaded (e.g. embeddinggemma:300m).
+
+Marked `live`: the normal offline suite is unaffected (deselect with
+`-m "not live"`), and the module auto-skips when the gateway is unreachable.
 """
 
 import json
+import socket
+from urllib.parse import urlparse
+
 import httpx
 import pytest
 
@@ -11,13 +17,23 @@ BASE = "https://hawaiian-greatly-ata-respondents.trycloudflare.com/v1"
 EMBEDDING_MODEL = "embeddinggemma:300m"
 TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0)
 
+pytestmark = pytest.mark.live
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _gateway_reachable():
+    """Skip the whole live module if the gateway host won't accept a TCP connect."""
+    host = urlparse(BASE).hostname
+    port = 443
+    try:
+        socket.create_connection((host, port), timeout=5).close()
+    except OSError as e:
+        pytest.skip(f"gateway {host}:{port} unreachable — skipping live tests ({e})")
+
 
 @pytest.fixture(scope="module")
 def client():
     return httpx.Client(base_url=BASE, timeout=TIMEOUT)
-
-
-import pytest
 
 
 class TestEmbeddingsBasic:

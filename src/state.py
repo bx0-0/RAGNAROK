@@ -19,7 +19,7 @@ from src.config import (
     MAX_CONNECTIONS,
     MAX_KEEPALIVE_CONNECTIONS,
     KEEPALIVE_EXPIRY,
-    _OLLAMA_OPTS_WARMUP,
+    model_opts,
 )
 from src.logging import logger
 
@@ -46,7 +46,7 @@ async def _warmup(state: GatewayState):
             messages=[{"role": "user", "content": "hi"}],
             stream=False,
             keep_alive=KEEP_ALIVE,
-            options=_OLLAMA_OPTS_WARMUP,
+            options=model_opts(MODEL_NAME, warmup=True),
         )
         state.warmup_ok = True
         state.is_warm = True

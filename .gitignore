@@ -9,6 +9,5 @@ cloudflared
 *.log
 .DS_Store
 .env
-PROJECT.md
-CONVENTIONS.md
+logs/
 graphify-out/

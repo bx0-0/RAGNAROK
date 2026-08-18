@@ -1,18 +1,14 @@
 """Streaming SSE generator — extracted from server for readability."""
 
-import os
 import time
 import asyncio
-from dataclasses import dataclass
 
-import orjson
 import httpx
 import ollama
 
 from fastapi.responses import StreamingResponse
 
 from src.logging import logger, log_request
-from src.utils.helpers import fast_id
 from src.sse import (
     _SSE_DONE,
     _SSE_KEEPALIVE,
@@ -21,198 +17,95 @@ from src.sse import (
 )
 from src.errors import build_sse_error_frame
 from src.models.chat import build_chat_kwargs
+from src.retry import RetryPolicy
+from src.batcher import StreamBatcher
 
 # These are read from server at runtime; we avoid importing them to prevent circular deps.
 # They're passed via config dict instead.
 
-MAX_RETRIES = 2
+# Retry configuration is read once at import (server start) — consistent with the
+# rest of the config in src/config.py. Tests monkeypatch this to shrink backoffs
+# or change max_retries.
+_RETRY = RetryPolicy.default()
 
 
-def _should_retry_empty() -> bool:
-    return os.environ.get("RETRY_ON_EMPTY", "False").lower() in ("true", "1", "yes")
+# ── Parsing / normalization ──
+# The Ollama→normalized-data layer lives in src/parser.py. The underscored
+# names below are re-exported so existing importers (streaming internals,
+# tests) keep working unchanged; prefer the parser.py names for new code.
+from src.parser import ParsedChunk, format_tool_calls, parse_chunk
+
+_ParsedChunk = ParsedChunk
+_format_tool_calls = format_tool_calls
+_parse_chunk = parse_chunk
 
 
-@dataclass
-class _ParsedChunk:
-    """Normalized, serializable view of one Ollama streaming chunk.
+_PUMP_CHUNK = "chunk"
+_PUMP_KEEPALIVE = "keepalive"
+_PUMP_ERROR = "error"
+_PUMP_END = "end"
 
-    Built by `_parse_chunk` from the raw ollama object so all the messy
-    extraction (content shape, thinking, tool-call formatting) lives in one
-    pure, unit-testable place. `tool_calls` is a list only when the chunk
-    carries them (else empty); `content`/`thinking` are always str.
+# Send a keepalive if no chunk arrives within this many seconds (long Ollama gap).
+PUMP_CHUNK_TIMEOUT = 60
+
+
+async def _pump_chunk_item(queue: "asyncio.Queue", request_id: str):
+    """Fetch the next item from the Ollama chunk queue with a 60s gap timeout.
+
+    Pure pump: owns the queue wait, the long-gap keepalive decision, and the
+    end/error sentinels — returns a (kind, payload) tag so the caller (the
+    orchestrator) can decide what to yield / raise. Kinds:
+
+      _PUMP_KEEPALIVE  (payload=None)          -> caller yields _SSE_KEEPALIVE
+      _PUMP_ERROR      (payload=Exception)     -> caller raises payload
+      _PUMP_END        (payload=None)          -> caller breaks
+      _PUMP_CHUNK      (payload=chunk object)  -> caller processes chunk
+
+    One responsibility: getting the next chunk (or timeout/sentinel) out of the
+    queue. No SSE formatting, no parsing, no retry, no pusher-task lifecycle —
+    the caller owns all of those.
     """
-    content: str = ""
-    thinking: str = ""
-    tool_calls: list = None  # populated (non-empty) when the chunk has tool calls
-    done: bool = False
-    prompt_eval_count: int = 0
-    eval_count: int = 0
-    done_reason: str = ""
+    try:
+        item = await asyncio.wait_for(queue.get(), timeout=PUMP_CHUNK_TIMEOUT)
+    except asyncio.TimeoutError:
+        logger.info(f"[{request_id}] Keepalive ping (Ollama gap > {PUMP_CHUNK_TIMEOUT}s)")
+        return _PUMP_KEEPALIVE, None
+
+    if isinstance(item, Exception):
+        return _PUMP_ERROR, item
+    if item is StopAsyncIteration:
+        return _PUMP_END, None
+    return _PUMP_CHUNK, item
 
 
-def _format_tool_calls(tool_calls, tool_call_index: int) -> list:
-    """Convert Ollama tool_calls objects to the OpenAI delta shape.
+def _finalize_frames(request_id_str: str, created: int, active_model: str,
+                     has_tool_calls: bool, prompt_tokens: int, completion_tokens: int,
+                     message: str, err_type: str) -> tuple:
+    """Build the 3-frame terminal sequence (error + done + [DONE]) for an
+    aborted stream. Pure: no I/O, no side effects. The caller (stream_generator)
+    yields these in order and returns — a hard stop that does NOT fall through
+    to the success path.
 
-    `tool_call_index` is the next index to assign; the return value is a
-    2-tuple is avoided (to keep it trivially testable) — instead the list of
-    formatted dicts is returned and the caller increments its own counter by
-    `len(formatted)`.
+    Used by the timeout / ResponseError / generic-crash paths, which all share
+    the identical "error frame, then usage, then [DONE], then exit" shape.
     """
-    formatted = []
-    for tc in tool_calls:
-        if tc is None:
-            continue
-        tc_func = getattr(tc, "function", None)
-        if tc_func is None:
-            tc_name = "?"
-            tc_args_json = "{}"
-        else:
-            tc_name = getattr(tc_func, "name", "?") or "?"
-            tc_args = getattr(tc_func, "arguments", None) or ""
-            if isinstance(tc_args, str):
-                tc_args_json = tc_args
-            else:
-                tc_args_json = orjson.dumps(tc_args).decode() if tc_args else "{}"
-        formatted.append({
-            "index": tool_call_index + len(formatted),
-            "id": getattr(tc, "id", None) or f"call_{fast_id()}",
-            "type": "function",
-            "function": {
-                "name": tc_name,
-                "arguments": tc_args_json,
-            },
-        })
-    return formatted
-
-
-def _parse_chunk(chunk) -> _ParsedChunk:
-    """Extract the fields we care about from one Ollama chunk.
-
-    Pure: reads attributes off the chunk, no I/O, no server, no mutation.
-    Handles the `content` shape variants (str or list-of-parts) and the
-    `thinking` field uniformly so the main loop stays simple.
-    """
-    msg = chunk.message
-    if msg is None:
-        # Ollama's empty final chunk — no payload
-        return _ParsedChunk()
-
-    content = msg.content or ""
-    if isinstance(content, list):
-        content = " ".join(
-            item.get("text", "")
-            for item in content
-            if isinstance(item, dict) and item.get("type") == "text"
-        )
-
-    thinking = getattr(msg, "thinking", "") or ""
-
-    tool_calls = msg.tool_calls
-    formatted = []
-    if tool_calls:
-        formatted = _format_tool_calls(tool_calls, 0)
-
-    return _ParsedChunk(
-        content=content,
-        thinking=thinking,
-        tool_calls=formatted,
-        done=bool(chunk.done),
-        prompt_eval_count=chunk.prompt_eval_count or 0,
-        eval_count=chunk.eval_count or 0,
-        done_reason=chunk.done_reason or "",
+    return (
+        build_sse_error_frame(message, err_type),
+        build_done_chunk(request_id_str, created, active_model,
+                         has_tool_calls, prompt_tokens, completion_tokens),
+        _SSE_DONE,
     )
-
-
-class _StreamBatcher:
-    """Accumulates reasoning/content deltas and emits batched SSE frames.
-
-    Owns the "first chunk gets role" invariant and the batching buffer so the
-    main loop never has to juggle those locals itself. `tool_call_index` is
-    owned here too — the next index to assign to a new tool call.
-    """
-
-    def __init__(self, sfx: bytes, efx: bytes):
-        self._sfx = sfx
-        self._efx = efx
-        self._first = True
-        self._content: list = []
-        self._thinking: list = []
-        self.tool_call_index = 0
-
-    # -- introspection ------------------------------------------------------
-    def _delta(self, extra: dict | None = None) -> dict:
-        delta = {}
-        if self._first:
-            delta["role"] = "assistant"
-            self._first = False
-        if self._thinking:
-            delta["reasoning_content"] = "".join(self._thinking)
-        if self._content:
-            delta["content"] = "".join(self._content)
-        if extra:
-            delta.update(extra)
-        return delta
-
-    def dirty(self) -> bool:
-        """True if there is unflushed reasoning/content buffered."""
-        return bool(self._content or self._thinking)
-
-    def content_len(self) -> int:
-        return len("".join(self._content))
-
-    def thinking_len(self) -> int:
-        return len("".join(self._thinking))
-
-    def reset(self) -> None:
-        """Clear buffered text/thinking (keeps the first-frame flag and the
-        tool_call_index). Called at the start of each retry attempt."""
-        self._content.clear()
-        self._thinking.clear()
-
-    # -- emission -----------------------------------------------------------
-    def flush(self) -> bytes | None:
-        """Emit a buffered delta frame and clear the buffer. None if empty."""
-        if not self._content and not self._thinking:
-            return None
-        delta = self._delta()
-        self._content.clear()
-        self._thinking.clear()
-        return self._sfx + orjson.dumps(delta) + self._efx
-
-    def emit(self, extra: dict) -> bytes | None:
-        """Emit a delta frame carrying *extra* keys (e.g. tool_calls).
-
-        Any buffered text/thinking is folded into the same frame first, then
-        the buffer is cleared — a tool call and its preceding text ship together.
-        """
-        if not self._content and not self._thinking and not extra:
-            return None
-        delta = self._delta(extra)
-        self._content.clear()
-        self._thinking.clear()
-        return self._sfx + orjson.dumps(delta) + self._efx
-
-    def add(self, parsed: _ParsedChunk) -> None:
-        """Accumulate a parsed chunk's text/thinking into the buffer.
-
-        Tool calls are NOT accumulated — they force an immediate flush via
-        `emit`; the caller handles those separately.
-        """
-        if parsed.content:
-            self._content.append(parsed.content)
-        if parsed.thinking:
-            self._thinking.append(parsed.thinking)
 
 
 async def stream_generator(state, request_id, ollama_payload, start_time,
                            request_id_str, created, active_model, max_stream_s,
-                           ollama_chat_url, sfx, efx):
+                           sfx, efx):
     """Core async generator that yields SSE frames from Ollama's streaming API."""
 
-    # _StreamBatcher owns the "first frame gets role" invariant and the
+    # StreamBatcher owns the "first frame gets role" invariant and the
     # tool_call_index counter (both persist across retries, as before); the
     # text/thinking buffer is reset at the start of each retry attempt.
-    batcher = _StreamBatcher(sfx, efx)
+    batcher = StreamBatcher(sfx, efx)
     has_tool_calls = False
     prompt_tokens = completion_tokens = 0
     released = False
@@ -227,7 +120,7 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
 
     pusher_task = None  # track for cancellation on disconnect
 
-    while retry_count <= MAX_RETRIES:
+    while retry_count <= _RETRY.max_retries:
         # ── Check client disconnected before retry ──
         try:
             await asyncio.sleep(0)
@@ -279,30 +172,19 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     except Exception as e:
                         await chunk_queue.put(e)
 
-                CHUNK_TIMEOUT = 60  # send keepalive if no chunk arrives in 60s
                 _pusher = asyncio.create_task(_queue_pusher())
                 pusher_task = _pusher  # save ref for disconnect handling
 
                 while True:
-                    # Wait for next chunk with a timeout so we can detect long gaps
-                    try:
-                        chunk_or_sentinel = await asyncio.wait_for(
-                            chunk_queue.get(), timeout=CHUNK_TIMEOUT
-                        )
-                    except asyncio.TimeoutError:
-                        # No chunk arrived within CHUNK_TIMEOUT seconds — send keepalive
-                        logger.info(f"[{request_id}] Keepalive ping (Ollama gap > {CHUNK_TIMEOUT}s)")
+                    kind, payload = await _pump_chunk_item(chunk_queue, request_id)
+                    if kind == _PUMP_KEEPALIVE:
                         yield _SSE_KEEPALIVE
                         continue
-
-                    # Handle queue errors
-                    if isinstance(chunk_or_sentinel, Exception):
-                        raise chunk_or_sentinel
-                    if chunk_or_sentinel is StopAsyncIteration:
-                        # No more chunks from Ollama — stream ended
+                    if kind == _PUMP_ERROR:
+                        raise payload
+                    if kind == _PUMP_END:
                         break
-
-                    chunk = chunk_or_sentinel
+                    chunk = payload
 
                     # ── Hard Timeout ──
                     stream_elapsed = time.monotonic() - start_time
@@ -311,14 +193,12 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                         frame = _flush_batch()
                         if frame:
                             yield frame
-                        yield build_sse_error_frame(
-                            f"Generation exceeded {max_stream_s}s limit", "timeout"
-                        )
-                        yield build_done_chunk(
+                        for f in _finalize_frames(
                             request_id_str, created, active_model,
                             has_tool_calls, prompt_tokens, completion_tokens,
-                        )
-                        yield _SSE_DONE
+                            f"Generation exceeded {max_stream_s}s limit", "timeout",
+                        ):
+                            yield f
                         return
 
                     chunks_captured += 1
@@ -334,20 +214,20 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
 
                     should_flush = False
 
-                    # ── Tool calls force immediate flush ──
+                    # ── Tool calls force immediate emission ──
                     if parsed.tool_calls:
                         has_tool_calls = True
-                        # Flush buffered text first, then emit the tool-call delta.
-                        frame = _flush_batch()
-                        if frame:
-                            yield frame
+                        # batcher.emit() folds any buffered text/thinking into
+                        # the same frame and clears the buffer — one atomic
+                        # delta carries both, no separate flush needed.
                         formatted = _format_tool_calls(parsed.tool_calls, batcher.tool_call_index)
                         batcher.tool_call_index += len(formatted)
-                        try:
-                            yield sfx + orjson.dumps(batcher._delta({"tool_calls": formatted})) + efx
-                        except Exception as ex:
-                            logger.error(f"[{request_id}] Tool call serialize failed: {ex}")
-                        should_flush = True
+                        frame = batcher.emit({"tool_calls": formatted})
+                        if frame is not None:
+                            try:
+                                yield frame
+                            except Exception as ex:
+                                logger.error(f"[{request_id}] Tool call emit failed: {ex}")
 
                     # ── Time-based flush (30ms on slow GPUs, 100ms was too much latency) ──
                     if (time.monotonic() - batch_timer) > 0.05:
@@ -443,8 +323,8 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                             f"[{request_id}] Ollama died mid-stream after {chunks_captured} chunks — retrying"
                         )
                         retry_count += 1
-                        if retry_count <= MAX_RETRIES:
-                            await asyncio.sleep(2)
+                        if _RETRY.should_retry_crashed(retry_count):
+                            await asyncio.sleep(_RETRY.next_delay("crashed", retry_count))
                             stream_error = None  # reset — retry may succeed
                             continue  # retry
                         # retries exhausted
@@ -457,11 +337,11 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     else:
                         retry_count += 1
                         logger.warning(
-                            f"[{request_id}] Empty stream (attempt {retry_count}/{MAX_RETRIES})"
+                            f"[{request_id}] Empty stream (attempt {retry_count}/{_RETRY.max_retries})"
                         )
-                        if _should_retry_empty() and retry_count <= MAX_RETRIES:
+                        if _RETRY.should_retry_empty(retry_count):
                             yield _SSE_KEEPALIVE
-                            await asyncio.sleep(1)
+                            await asyncio.sleep(_RETRY.next_delay("empty", retry_count))
                             stream_error = None  # reset — retry may succeed
                             continue  # retry the request
                         # Either retries disabled or exhausted — yield valid empty completion
@@ -495,22 +375,22 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             elapsed = round(time.monotonic() - start_time, 2)
             stream_error = f"Ollama {e.status_code}: {str(e.error)[:60]}"
             logger.error(f"[{request_id}] Ollama ResponseError {e.status_code}: {e.error}")
-            yield build_sse_error_frame(str(e.error)[:100], "upstream_error")
-            yield build_done_chunk(
+            for f in _finalize_frames(
                 request_id_str, created, active_model,
                 has_tool_calls, prompt_tokens, completion_tokens,
-            )
-            yield _SSE_DONE
+                str(e.error)[:100], "upstream_error",
+            ):
+                yield f
             return
         except Exception as e:
             stream_error = f"CRASH {type(e).__name__}: {str(e)[:60]}"
             logger.error(f"[{request_id}] STREAM CRASH: {e}")
-            yield build_sse_error_frame("Internal server error", "server_error")
-            yield build_done_chunk(
+            for f in _finalize_frames(
                 request_id_str, created, active_model,
                 has_tool_calls, prompt_tokens, completion_tokens,
-            )
-            yield _SSE_DONE
+                "Internal server error", "server_error",
+            ):
+                yield f
             return
         finally:
             if not released:
@@ -536,18 +416,16 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
 
             
 def handle_stream(state, request_id, ollama_payload, start_time, active_model,
-                  max_stream_seconds: int, ollama_chat_url: str):
+                  max_stream_seconds: int):
     """Entry point called from server route handler."""
-    import time as _time
-
     request_id_str = f"chatcmpl-{request_id}"
-    created = int(_time.time())
+    created = int(time.time())
     sfx, efx = make_sse_frames(active_model, request_id_str, created)
 
     return StreamingResponse(
         stream_generator(state, request_id, ollama_payload, start_time,
                          request_id_str, created, active_model,
-                         max_stream_seconds, ollama_chat_url, sfx, efx),
+                         max_stream_seconds, sfx, efx),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -7,10 +7,10 @@ All flags override `config/settings.env` values. Repeat `--model` to load multip
 | Flag | Description | Default |
 |---|---|---|
 | `--model <name>` | Ollama model or `hf.co/...` (repeatable for multi-model) | `qwen3.5:9b` |
-| `--max-concurrent <n>` | Max simultaneous requests before 429 rejection | `1` |
+| `--max-concurrent <n>` | Max simultaneous requests before 429 rejection | `2` |
 | `--num-ctx <n>` | Context window in tokens | `16384` |
 | `--num-predict <n>` | Max tokens to generate per response | `16384` |
-| `--num-batch <n>` | Decoding batch size for throughput tuning | `2444` |
+| `--num-batch <n>` | Decoding batch size for throughput tuning | `500` |
 | `--flash-attn <bool>` | Enable flash attention (reduces VRAM usage) | `True` |
 | `--num-gpu <n>` | GPU layers (-1 = all on GPU, 0 = CPU only) | `-1` |
 | `--keep-alive <dur>` | Keep model in RAM after last request (`60m`, `-1` = forever) | `60m` |

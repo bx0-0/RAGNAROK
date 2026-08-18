@@ -6,6 +6,8 @@ import os
 import json
 import time
 import asyncio
+import socket
+from urllib.parse import urlparse
 
 import pytest
 import httpx
@@ -18,6 +20,18 @@ MODEL_NAME = "qwen3.5:27b-mtp-q4_K_M"  # only deployed model — no embedding su
 # Per-endpoint timeout tuples: (connect, read)
 SSE_TIMEOUT = httpx.Timeout(connect=10.0, read=TIMEOUT_STREAM, write=30.0, pool=10.0)
 NONSTREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=TIMEOUT_NONSTREAM, write=30.0, pool=10.0)
+
+pytestmark = pytest.mark.live
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _gateway_reachable():
+    """Skip the whole live module if the gateway host won't accept a TCP connect."""
+    host = urlparse(BASE).hostname
+    try:
+        socket.create_connection((host, 443), timeout=5).close()
+    except OSError as e:
+        pytest.skip(f"gateway {host}:443 unreachable — skipping live tests ({e})")
 
 
 @pytest.fixture(scope="module")
