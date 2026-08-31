@@ -35,7 +35,7 @@
 4. You get a working `https://*.trycloudflare.com/v1` URL for any OpenAI client
 5. **TTS endpoints** — text-to-speech with OmniVoice (600+ languages) or Inflect v2 (English, CPU-only)
 6. **Auto GC** — idle models auto-evict from memory after configurable timeout
-7. **Streaming control** — client disconnects cancel the generation; stop/unload endpoints for ops
+7. **Streaming control** — client disconnects cancel the generation; list active generations + stop/unload endpoints for ops
 
 Works with: **Codex · OpenCode · Cursor · VSCode AI extensions · Pi Agent · any OpenAI agent framework**
 

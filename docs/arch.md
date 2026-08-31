@@ -77,7 +77,7 @@ Ollama (localhost:11434) ──→ GPU inference
 - **Automatic retry** — up to 2 retries on empty streams or upstream crashes (configurable via `RETRY_ON_EMPTY`)
 - **Tool use support** — full OpenAI function calling with system prompt injection for chunked file writing
 - **Client-disconnect cancellation** — a `DisconnectAwareStreamingResponse` watches the ASGI `http.disconnect` event in parallel with the body stream; on disconnect it cancels the streaming task, which cancels the Ollama pusher and closes the per-request stream so generation stops immediately. The shared Ollama client is never closed; the concurrency slot is released exactly once.
-- **Generation control** — per-request stop (POST /v1/chat/completions/{request_id}/stop) and model unload (POST /v1/models/unload). Stop cancels one generation; unload stops that model's generations and evicts weights via keep_alive: 0. Separate operations.
+- **Generation control** — list active generations (GET /v1/chat/completions/active), per-request stop (POST /v1/chat/completions/{request_id}/stop), and model unload (POST /v1/models/unload). The active-list is read-only and returns the same request ids the stop endpoint accepts. Stop cancels one generation; unload stops that model's generations and evicts weights via keep_alive: 0. Separate operations.
 
 ## TTS Plugin Architecture
 

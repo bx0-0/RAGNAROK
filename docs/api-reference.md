@@ -158,6 +158,53 @@ timeout, wasting GPU. This path stops it immediately.
 Every streaming response carries an `x-request-id` response header (a short opaque id).
 Use it to target that specific in-flight generation with the stop endpoint.
 
+### List active generations
+
+**`GET /v1/chat/completions/active`**
+
+Read-only operational endpoint: returns one lightweight entry per in-flight
+streaming generation. Useful for discovering which requests are running and
+targeting one (or all) with the stop endpoint below. Listing is non-mutating:
+calling it never cancels, releases, or unloads anything.
+
+| | |
+|---|---|
+| **Path** | `/v1/chat/completions/active` |
+| **Body** | none |
+| **200** | `{"object":"list","count":N,"data":[...]}` |
+
+`data` items (one per active generation):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `request_id` | string | Same id carried in the `x-request-id` response header; feed this to the stop endpoint |
+| `model` | string | Model being generated (e.g. `qwen3.5:9b`) |
+| `status` | string | `running` (normal) or `cancelling` (a stop/unload is in flight) |
+| `elapsed_seconds` | number | Seconds since the generation started (0.01s precision) |
+
+```bash
+# Discover active generations
+curl -s https://YOUR-URL/v1/chat/completions/active
+
+# -> {"object":"list","count":1,"data":[
+#      {"request_id":"84c2ef9f","model":"qwen3.5:9b",
+#       "status":"running","elapsed_seconds":3.42} ]}
+```
+
+**Discover-and-stop workflow:**
+
+1. List active generations to find the id you want to target.
+2. Copy the `request_id`.
+3. Stop that specific generation with the stop endpoint.
+4. Re-list to confirm it disappeared.
+
+```bash
+BASE=https://YOUR-URL
+RID=$(curl -s $BASE/v1/chat/completions/active | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"][0]["request_id"])')
+curl -X POST $BASE/v1/chat/completions/$RID/stop
+curl -s $BASE/v1/chat/completions/active   # -> count: 0 (it's gone)
+```
+
 ### Stop a generation
 
 **`POST /v1/chat/completions/{request_id}/stop`**

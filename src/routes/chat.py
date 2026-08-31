@@ -118,6 +118,24 @@ async def openai_completions(request: Request):
                             MAX_STREAM_SECONDS)
 
 
+@router.get("/v1/chat/completions/active")
+async def list_active_completions(request: Request):
+    """List in-flight streaming generations.
+
+    Read-only: returns one lightweight entry per active generation (no prompts,
+    completions, or headers). Each entry request_id is the same id accepted by
+    the stop endpoint POST /v1/chat/completions/{request_id}/stop, so you can
+    discover an active generation and stop it by id.
+    """
+    state = _get_state(request)
+    streams = state.list_active_streams()
+    return {
+        "object": "list",
+        "count": len(streams),
+        "data": streams,
+    }
+
+
 @router.post("/v1/chat/completions/{request_id}/stop")
 async def stop_generation(request: Request, request_id: str):
     """Stop an in-flight streaming generation.

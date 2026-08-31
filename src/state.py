@@ -70,6 +70,25 @@ class GatewayState:
     def streams_for_model(self, model: str) -> List[ActiveStream]:
         return [s for s in self.active_streams.values() if s.model == model]
 
+    def list_active_streams(self) -> List[Dict[str, Any]]:
+        """Return lightweight, read-only snapshots of all in-flight generations.
+
+        Pure read: never mutates the registry, cancels, or releases anything.
+        Intended for the operational "active requests" endpoint. Each item carries
+        only the fields already stored in the registry (no prompts/completions).
+        """
+        now = time.monotonic()
+        out: List[Dict[str, Any]] = []
+        for stream in self.active_streams.values():
+            done = stream.task is not None and stream.task.done()
+            out.append({
+                "request_id": stream.request_id,
+                "model": stream.model,
+                "status": "running" if not done else "cancelling",
+                "elapsed_seconds": round(now - stream.started_at, 2),
+            })
+        return out
+
     def _cancel_stream_task(self, entry: ActiveStream) -> None:
         """Request cancellation of the driving task. Caller awaits separately.
 
