@@ -11,3 +11,4 @@ cloudflared
 .env
 logs/
 graphify-out/
+server.pid

@@ -76,6 +76,8 @@ Ollama (localhost:11434) ──→ GPU inference
 - **SSE envelope caching** — `lru_cache(16)` pre-builds JSON templates per model, replaces only deltas at runtime
 - **Automatic retry** — up to 2 retries on empty streams or upstream crashes (configurable via `RETRY_ON_EMPTY`)
 - **Tool use support** — full OpenAI function calling with system prompt injection for chunked file writing
+- **Client-disconnect cancellation** — a `DisconnectAwareStreamingResponse` watches the ASGI `http.disconnect` event in parallel with the body stream; on disconnect it cancels the streaming task, which cancels the Ollama pusher and closes the per-request stream so generation stops immediately. The shared Ollama client is never closed; the concurrency slot is released exactly once.
+- **Generation control** — per-request stop (POST /v1/chat/completions/{request_id}/stop) and model unload (POST /v1/models/unload). Stop cancels one generation; unload stops that model's generations and evicts weights via keep_alive: 0. Separate operations.
 
 ## TTS Plugin Architecture
 
@@ -96,3 +98,21 @@ See [TTS API Reference](tts-api.md) for endpoints and examples.
 - Models are **touched** on every request, resetting the idle timer
 - Manual unload via `POST /v1/audio/unload` or GC sweep both go through the same path
 - Eviction frees GPU/CPU memory for the next incoming request
+
+
+
+## Tests for streaming control
+
+tests/test_disconnect.py exercises the full cancel lifecycle against a fake Ollama
+(tests/fake_ollama.py): normal streaming, FIN disconnect, RST disconnect, explicit stop,
+unload, and concurrent-generation isolation. Run with a fake Ollama on :11434 and the gateway
+on :8120:
+
+```bash
+FAKE_PORT=11434 python3 tests/fake_ollama.py &   # fake Ollama
+PORT=8120 python3 -m src &                        # gateway
+python3 tests/test_disconnect.py
+```
+
+> Verified **against the fake Ollama** (abort-on-client-close is emulated). Not a real-GPU
+> VRAM-release test.

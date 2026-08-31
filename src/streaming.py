@@ -359,8 +359,14 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             break  # success — exit retry loop
 
         except asyncio.CancelledError:
-            logger.warning(f"[{request_id}] Stream cancelled (client disconnected)")
-            return
+            logger.warning(f"[{request_id}] CLIENT_DISCONNECTED — cancelling pusher")
+            if pusher_task and not pusher_task.done():
+                pusher_task.cancel()
+                try:
+                    await pusher_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            raise
         except GeneratorExit:
             # FastAPI calls .aclose() on the generator when client disconnects
             logger.warning(f"[{request_id}] Generator closed (client disconnect)")
@@ -415,6 +421,83 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                     )
 
             
+
+
+# ─── Disconnect-aware response ───
+
+class DisconnectAwareStreamingResponse(StreamingResponse):
+    """StreamingResponse that detects client disconnect via ASGI receive().
+
+    On spec_version >= 2.4 (uvicorn+httptools), Starlette does NOT spawn a
+    disconnect watcher — it just calls stream_response(send) directly.
+    This class adds the watcher back: a concurrent receive() loop that
+    detects http.disconnect and cancels the streaming task, triggering the
+    generator's CancelledError path (which cancels the Ollama pusher).
+    """
+
+    def __init__(self, body_iterator, *, state=None, request_id=None, model=None,
+                 media_type=None, status_code=200, headers=None, background=None):
+        super().__init__(
+            content=body_iterator,
+            status_code=status_code,
+            media_type=media_type,
+            headers=headers,
+            background=background,
+        )
+        self._state = state
+        self._request_id = request_id
+        self._model = model
+
+    async def __call__(self, scope, receive, send):
+        async def _stream():
+            await self.stream_response(send)
+
+        async def _watch():
+            while True:
+                msg = await receive()
+                if msg["type"] == "http.disconnect":
+                    rid = self._request_id or "?"
+                    logger.info(f"[{rid}] CLIENT_DISCONNECT_DETECTED")
+                    return
+
+        stream_task = asyncio.create_task(_stream())
+        watch_task = asyncio.create_task(_watch())
+
+        # Register active stream for stop/unload endpoints
+        if self._state and self._request_id:
+            self._state.register_stream(self._request_id, self._model, stream_task)
+
+        try:
+            done, pending = await asyncio.wait(
+                {stream_task, watch_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        except BaseException:
+            stream_task.cancel()
+            watch_task.cancel()
+            raise
+
+        # Cancel the remaining task
+        for t in pending:
+            t.cancel()
+            try:
+                await t
+            except BaseException:
+                pass
+
+        # Unregister (idempotent)
+        if self._state and self._request_id:
+            self._state.unregister_stream(self._request_id)
+
+        # Propagate any exception from completed tasks
+        for t in done:
+            if not t.cancelled() and t.exception() is not None:
+                raise t.exception()
+
+        if self.background is not None:
+            await self.background()
+
+
 def handle_stream(state, request_id, ollama_payload, start_time, active_model,
                   max_stream_seconds: int):
     """Entry point called from server route handler."""
@@ -422,14 +505,20 @@ def handle_stream(state, request_id, ollama_payload, start_time, active_model,
     created = int(time.time())
     sfx, efx = make_sse_frames(active_model, request_id_str, created)
 
-    return StreamingResponse(
-        stream_generator(state, request_id, ollama_payload, start_time,
-                         request_id_str, created, active_model,
-                         max_stream_seconds, sfx, efx),
+    gen = stream_generator(state, request_id, ollama_payload, start_time,
+                           request_id_str, created, active_model,
+                           max_stream_seconds, sfx, efx)
+
+    return DisconnectAwareStreamingResponse(
+        gen,
+        state=state,
+        request_id=request_id,
+        model=active_model,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "x-request-id": request_id,
         },
     )

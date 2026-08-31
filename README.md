@@ -35,6 +35,7 @@
 4. You get a working `https://*.trycloudflare.com/v1` URL for any OpenAI client
 5. **TTS endpoints** — text-to-speech with OmniVoice (600+ languages) or Inflect v2 (English, CPU-only)
 6. **Auto GC** — idle models auto-evict from memory after configurable timeout
+7. **Streaming control** — client disconnects cancel the generation; stop/unload endpoints for ops
 
 Works with: **Codex · OpenCode · Cursor · VSCode AI extensions · Pi Agent · any OpenAI agent framework**
 
@@ -129,6 +130,7 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
 | 🔍 **Model Sources** | [docs/install.md](docs/install.md) | Ollama library, HF GGUF, platform setup (Kaggle/Colab/local) |
 | 🎙️ **TTS API** | [docs/tts-api.md](docs/tts-api.md) | Speech endpoints, voice_instruct reference, examples |
 | 🔌 **API Reference** | [docs/api-reference.md](docs/api-reference.md) | All OpenAI-compatible endpoints |
+| 🛑 **Streaming Control** | [docs/api-reference.md](docs/api-reference.md#streaming-lifecycle--control) | Disconnect cancellation, stop / unload endpoints |
 | 🖥️ **Platform Guides** | [docs/install.md](docs/install.md) | Kaggle 30GB, Colab 15GB, local Linux setup |
 
 ---

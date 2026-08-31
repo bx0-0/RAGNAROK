@@ -126,6 +126,97 @@ curl https://YOUR-URL/health
 
 ---
 
+## Streaming Lifecycle & Control
+
+The streaming API is fully OpenAI-compatible and unchanged: `stream: true` still returns
+`data: {...}
+
+` SSE frames terminated by `data: [DONE]
+
+`.
+
+### Client-disconnect cancellation
+
+When a streaming client disconnects unexpectedly (FIN, RST, Wi-Fi drop, or a proxy/tunnel
+timeout), the gateway detects the disconnect via the ASGI `http.disconnect` event and
+cancels the in-flight generation:
+
+```
+client disconnect -> disconnect detection (ASGI http.disconnect)
+  -> streaming task cancelled -> Ollama stream closed -> generation stops
+  -> request cleanup -> concurrency slot released
+```
+
+Previously a client disconnect left the Ollama generation running until the hard stream
+timeout, wasting GPU. This path stops it immediately.
+
+> The model stays loaded. A client disconnect only releases the active generation — it does
+> **not** evict model weights from memory. See **Unload a model** below.
+
+### Request ID
+
+Every streaming response carries an `x-request-id` response header (a short opaque id).
+Use it to target that specific in-flight generation with the stop endpoint.
+
+### Stop a generation
+
+**`POST /v1/chat/completions/{request_id}/stop`**
+
+Cancels a single in-flight streaming generation. Affects **one request only**; other
+concurrent generations continue unaffected. Does **not** unload the model.
+
+| | |
+|---|---|
+| **Path param** | `request_id` — value of the `x-request-id` header from the stream |
+| **Body** | none |
+| **200** | `{"status":"stopped","request_id":"<id>"}` |
+| **404** | `{"error":{"message":"No active stream with id <id>","type":"not_found"}}` (id unknown or already finished) |
+
+```bash
+# Capture the request id from the streaming response header, then stop it
+RID=$(curl -s -D - -o /dev/null -X POST https://YOUR-URL/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen3.5:9b","messages":[{"role":"user","content":"long task"}],"stream":true}' \
+  | awk 'tolower($1)=="x-request-id:"{print $2}')
+curl -X POST "https://YOUR-URL/v1/chat/completions/$RID/stop"
+```
+
+### Unload a model
+
+**`POST /v1/models/unload`**
+
+Explicitly evicts a model from Ollama's active residency. First stops any in-flight
+generations for that model (frees GPU compute), then issues Ollama `keep_alive: 0` to drop
+the weights, and reports the post-unload state.
+
+| | |
+|---|---|
+| **Body** | `{"model":"qwen3.5:9b"}` (optional — defaults to the first configured model) |
+| **Scope** | All in-flight generations for that model, then the model weights |
+| **200** | `{"status":"unloaded","model":"<name>","stopped_streams":N,"still_loaded":[...]}` |
+
+`still_loaded` lists models Ollama still reports as resident after the evict (empty when
+the model is fully dropped). Use it to confirm the unload actually took effect.
+
+```bash
+curl -X POST https://YOUR-URL/v1/models/unload \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen3.5:9b"}'
+```
+
+> **Disconnect vs unload — separate operations.**
+> - **Stop / client disconnect**: cancels the active generation; model weights may stay
+>   resident in memory for reuse.
+> - **Unload**: stops that model's active generations **and** evicts the weights from memory.
+
+> **Security note:** like the rest of this API, these control endpoints are not
+> authenticated. They can stop or evict model execution, so they must be kept behind the
+> same trusted network boundary as the rest of the gateway (e.g. the Cloudflare tunnel is
+> the only public front door). Do not expose them on a wide-open interface without access
+> control.
+
+---
+
 ## TTS Endpoints
 
 See [TTS API Reference](tts-api.md) for full documentation including voice reference and examples.

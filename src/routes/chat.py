@@ -5,7 +5,7 @@ import time
 
 import orjson
 from fastapi import APIRouter, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 
 from src.config import (
     MODEL_NAME,
@@ -118,6 +118,27 @@ async def openai_completions(request: Request):
                             MAX_STREAM_SECONDS)
 
 
+@router.post("/v1/chat/completions/{request_id}/stop")
+async def stop_generation(request: Request, request_id: str):
+    """Stop an in-flight streaming generation.
+
+    Cancels the generator driving task → generator catches CancelledError
+    → cancels Ollama pusher → pusher calls aclose() on the HTTP stream
+    → Ollama aborts generation → GPU freed.
+    Model stays loaded (keep_alive is unaffected).
+    """
+    state = _get_state(request)
+    found = await state.stop_stream(request_id)
+    if found:
+        await log_request(request_id, "POST", f"/v1/chat/completions/{request_id}/stop", 200, 0, 0, 0, "STOPPED")
+        return JSONResponse({"status": "stopped", "request_id": request_id})
+    else:
+        return JSONResponse(
+            status_code=404,
+            content={"error": {"message": f"No active stream with id {request_id}", "type": "not_found"}},
+        )
+
+
 async def _handle_non_stream(state, request_id, ollama_payload, start_time, created, active_model):
     content_parts = []
     thinking_parts = []
@@ -151,11 +172,8 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
         return Response(
             status_code=500,
             content=orjson.dumps({
-                "error": {
-                    "message": "Upstream Ollama error",
-                    "type": "server_error",
-                    "detail": str(e)[:120],
-                }
+                "error": {"message": "Upstream Ollama error", "type": "server_error",
+                          "detail": str(e)[:120]}
             }),
             media_type="application/json",
         )
