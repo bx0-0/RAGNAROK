@@ -31,6 +31,8 @@ from src.config import (
 from src.state import GatewayState, _warmup
 from src.gc import ModelGC
 from src.routes import register_routers
+from src.model_manager import ModelManager
+from src.repair_manager import RepairManager
 from src.logging import logger, _open_log_fh, _log_fh as _gw_log_fh
 
 
@@ -48,6 +50,16 @@ async def lifespan(app: FastAPI):
         follow_redirects=True,
     )
     state.warmup_task = asyncio.create_task(_warmup(state))
+
+    # Centralized model lifecycle + explicit repair (user-driven).
+    state.models = ModelManager(state.http_client)
+    state.repairs = RepairManager(state.models)
+
+    # Rebuild any prior repair mappings from Ollama's stored metadata so a
+    # successful repair stays reachable after a restart (best-effort, non-fatal).
+    _n = await state.repairs.reconstruct_from_ollama()
+    if _n:
+        logger.info(f"Restored {_n} repair mapping(s) from Ollama.")
 
     app.state.gw = state
     _open_log_fh()

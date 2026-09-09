@@ -264,6 +264,67 @@ curl -X POST https://YOUR-URL/v1/models/unload \
 
 ---
 
+## Model Repair (runtime)
+
+RAGNAROK can fix a locally-pulled model whose *weights* are fine but whose
+Ollama runtime configuration (renderer / parser) is wrong — the case where a
+chat returns an Ollama error such as System message must be at the beginning.
+or invalid renderer.
+
+> **RAGNAROK never repairs automatically and never guesses the runtime config.**
+> On a repairable error the gateway returns a REPAIR_AVAILABLE error pointing
+> at POST /v1/models/repair. The caller must then explicitly supply the correct
+> 
+enderer / parser.
+
+**POST /v1/models/repair**
+
+Creates a **derived** Ollama model that **reuses the same weights**
+(FROM <original>) but applies the supplied runtime config, then safely
+switches the gateway over to it:
+
+1. Create the derived model from a Modelfile (FROM <orig>, RENDERER <r>, PARSER <p>).
+2. **Verify** the derived model actually serves a chat (a minimal chat probe — system + user, 1 token — exercising the same chat-template path the client will hit after repair).
+3. Switch the internal mapping so the **original name** routes to the derived model.
+4. Delete the original (best-effort) — **only after** the mapping switch succeeds.
+
+The public model name never changes: the client keeps sending the original name
+and RAGNAROK maps it internally.
+
+| | |
+|---|---|
+| **Body** | {"model":"<name>","renderer":"<token>","parser":"<token>"} — 
+enderer/parser optional, but at least one required |
+| **200** | {"status":"success","original_model":"...","repaired_model":"...","weights_changed":false,"created":bool,"original_deleted":bool,"active_model":"<original>"} |
+| **400** | Invalid request (bad model name, no renderer/parser) — error.code = INVALID_PARAMS |
+| **500** | ORIGINAL_NOT_FOUND, CREATE_FAILED, or VERIFY_FAILED — the original is **always kept** on failure |
+
+`ash
+# 1) A chat fails with a repairable error:
+curl https://YOUR-URL/v1/chat/completions -d '{"model":"Qwen3.8-27B:IQ3_S","messages":[...],"stream":true}'
+# -> error.code = "REPAIR_AVAILABLE", repair_endpoint = "/v1/models/repair"
+
+# 2) Repair it with the correct runtime config (weights are reused, not re-downloaded):
+curl -X POST https://YOUR-URL/v1/models/repair \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen3.8-27B:IQ3_S","renderer":"qwen3.8","parser":"qwen3.5"}'
+`
+
+> **Failure-safe.** If creation or verification fails, the original model is
+> left untouched and the mapping is not changed. A repeated identical repair is
+> idempotent (the same derived model is reused, not re-created).
+
+> **Restart-safe.** Repairs survive a gateway restart without any database: on
+> startup RAGNAROK rebuilds its name mappings from Ollama's own stored Modelfile
+> metadata (the derived model's FROM <original> line), so a model whose
+> original was already deleted stays reachable after a restart.
+
+> **Security note:** like the other control endpoints, this is unauthenticated
+> and can create/delete local models — keep it behind the same trusted network
+> boundary.
+
+---
+
 ## TTS Endpoints
 
 See [TTS API Reference](tts-api.md) for full documentation including voice reference and examples.
@@ -286,3 +347,36 @@ All endpoints return standard HTTP status codes:
 | 400 | Bad Request | Invalid JSON, missing required fields |
 | 429 | Too Many Requests | Server busy (concurrency limit reached) |
 | 500 | Internal Error | Model generation failed, TTS engine crashed |
+| 500 (REPAIR_AVAILABLE) | Repairable runtime error | Ollama rejected the model's runtime config (renderer/parser); repair via POST /v1/models/repair |
+
+### Repairable (repairable runtime) errors
+
+When Ollama returns an error that indicates the model's **runtime configuration** is wrong
+(e.g. System message must be at the beginning., invalid renderer, unknown parser),
+the gateway does **not** auto-repair. It surfaces a structured REPAIR_AVAILABLE error so
+a client can act on it explicitly.
+
+**Non-stream** response body (HTTP 500):
+
+`json
+{
+  "error": {
+    "message": "Model runtime configuration may be incompatible with this request.",
+    "type": "model_runtime_incompatible",
+    "code": "REPAIR_AVAILABLE",
+    "repair_available": true,
+    "repair_endpoint": "/v1/models/repair",
+    "detail": "System message must be at the beginning."
+  }
+}
+`
+
+**Stream** response: the SSE stream ends with a final data frame carrying the same
+REPAIR_AVAILABLE error object (plus 
+epair_available / 
+epair_endpoint), followed
+by the normal inish_reason:"stop" done frame and [DONE].
+
+Unrelated upstream errors (connection resets, OOM, etc.) still use the existing generic
+500 upstream_error path.
+

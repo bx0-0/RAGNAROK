@@ -15,7 +15,7 @@ from src.sse import (
     make_sse_frames,
     build_done_chunk,
 )
-from src.errors import build_sse_error_frame
+from src.errors import build_sse_error_frame, build_sse_repair_available_frame, is_repairable_error
 from src.models.chat import build_chat_kwargs
 from src.retry import RetryPolicy
 from src.batcher import StreamBatcher
@@ -274,6 +274,15 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
                 stream_error = f"{type(e).__name__}: {str(e)[:60]}"
                 logger.error(f"[{request_id}] Ollama connection error: {e}")
                 break
+            except ollama.ResponseError as e:
+                # Ollama rejected the request before streaming began (e.g. the
+                # "System message must be at the beginning" chat-template error
+                # that repair fixes). Propagate to the outer handler, which maps
+                # a repairable message to REPAIR_AVAILABLE instead of a generic
+                # upstream_error.
+                stream_error = f"Ollama {e.status_code}: {str(e.error)[:60]}"
+                logger.error(f"[{request_id}] Ollama ResponseError {e.status_code}: {e.error}")
+                raise
             except Exception as e:
                 stream_error = f"{type(e).__name__}: {str(e)[:60]}"
                 logger.error(f"[{request_id}] Stream loop error: {e}")
@@ -381,6 +390,15 @@ async def stream_generator(state, request_id, ollama_payload, start_time,
             elapsed = round(time.monotonic() - start_time, 2)
             stream_error = f"Ollama {e.status_code}: {str(e.error)[:60]}"
             logger.error(f"[{request_id}] Ollama ResponseError {e.status_code}: {e.error}")
+            if is_repairable_error(str(e.error)):
+                # Inform the client a repair is available -- do NOT auto-repair.
+                yield build_sse_repair_available_frame(str(e.error))
+                yield build_done_chunk(
+                    request_id_str, created, active_model,
+                    has_tool_calls, prompt_tokens, completion_tokens,
+                )
+                yield _SSE_DONE
+                return
             for f in _finalize_frames(
                 request_id_str, created, active_model,
                 has_tool_calls, prompt_tokens, completion_tokens,
@@ -503,6 +521,10 @@ def handle_stream(state, request_id, ollama_payload, start_time, active_model,
     """Entry point called from server route handler."""
     request_id_str = f"chatcmpl-{request_id}"
     created = int(time.time())
+    # Apply repair mapping: client original name -> derived repaired model.
+    repairs = getattr(state, "repairs", None)
+    if repairs is not None:
+        active_model = repairs.resolve(active_model)
     sfx, efx = make_sse_frames(active_model, request_id_str, created)
 
     gen = stream_generator(state, request_id, ollama_payload, start_time,

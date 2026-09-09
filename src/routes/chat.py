@@ -22,7 +22,7 @@ from src.utils.helpers import (
     read_body,
     fast_id,
 )
-from src.errors import _RATE_LIMIT_RESPONSE, _BAD_JSON_RESPONSE
+from src.errors import _RATE_LIMIT_RESPONSE, _BAD_JSON_RESPONSE, is_repairable_error, build_repair_available_response
 from src.models.chat import ChatCompletionRequest, build_chat_kwargs
 from src.streaming import handle_stream
 
@@ -72,6 +72,11 @@ async def openai_completions(request: Request):
         active_model = chat_req.model
     else:
         active_model = MODEL_NAME
+
+    # ── Apply repair mapping (client keeps sending original name) ──
+    repairs = getattr(state, "repairs", None)
+    if repairs is not None:
+        active_model = repairs.resolve(active_model)
 
     msg_count = len(chat_req.messages)
     total_chars = sum(
@@ -187,6 +192,8 @@ async def _handle_non_stream(state, request_id, ollama_payload, start_time, crea
         elapsed = round(time.monotonic() - start_time, 2)
         logger.error(f"[{request_id}] Non-stream error: {e}")
         await log_request(request_id, "POST", "/v1/chat/completions", 500, elapsed, 0, 0, f"ERR:{str(e)[:40]}")
+        if is_repairable_error(str(e)):
+            return build_repair_available_response(str(e))
         return Response(
             status_code=500,
             content=orjson.dumps({

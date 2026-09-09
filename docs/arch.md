@@ -99,6 +99,16 @@ See [TTS API Reference](tts-api.md) for endpoints and examples.
 - Manual unload via `POST /v1/audio/unload` or GC sweep both go through the same path
 - Eviction frees GPU/CPU memory for the next incoming request
 
+## Model Management & Runtime Repair
+
+Two focused managers sit alongside ModelGC and are exposed on GatewayState (created in the server lifespan):
+
+| Module | Responsibility |
+|---|---|
+| src/model_manager.py | Thin, non-duplicating Ollama API wrapper: list, exists, show, pull, delete, create_from_modelfile, and ensure_available (existence check before any pull — the single source of truth for "does this model exist locally?"). |
+| src/repair_manager.py | Repair orchestration: builds a Modelfile (FROM <orig>, RENDERER <r>, PARSER <p>), creates the derived model, **verifies** it with a minimal chat probe (exercises the same chat-template path the client will hit), atomically switches the internal name mapping, and deletes the original only **after** the mapping succeeds. Per-model asyncio.Lock prevents duplicate repairs; identical config is idempotent. On startup, reconstructs any prior repair mappings from Ollama stored Modelfile metadata (no separate storage) so a successful repair stays reachable after a restart. |
+
+The gateway **never auto-repairs** and **never guesses** the renderer/parser. Repair is explicit via POST /v1/models/repair. Repairable Ollama errors surfaced during chat return a REPAIR_AVAILABLE error (HTTP 500 / final SSE frame) pointing at that endpoint. See [api-reference.md](api-reference.md) for the full contract.
 
 
 ## Tests for streaming control

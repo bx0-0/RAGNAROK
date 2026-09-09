@@ -41,6 +41,8 @@ class GatewayState:
     __slots__ = (
         "http_client", "semaphore", "warmup_task", "is_warm", "warmup_ok",
         "active_streams",
+        "models",   # ModelManager (created in lifespan)
+        "repairs",  # RepairManager (created in lifespan)
     )
 
     def __init__(self):
@@ -51,6 +53,9 @@ class GatewayState:
         self.warmup_ok = False  # True if warmup succeeded, False if it failed
         # request_id -> ActiveStream ; owned by the streaming path
         self.active_streams: Dict[str, ActiveStream] = {}
+        # Model lifecycle + repair; set in server.lifespan after http_client.
+        self.models = None      # type: ignore[assignment]
+        self.repairs = None    # type: ignore[assignment]
 
     # ── active-stream registry ──
     def register_stream(self, request_id: str, model: str, task: "asyncio.Task") -> None:
