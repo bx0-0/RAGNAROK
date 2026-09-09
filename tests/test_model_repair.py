@@ -135,6 +135,25 @@ def test_exists_uses_structured_names():
     assert _run(mm.exists("nope")) is False
 
 
+def test_list_handles_ollama_062_model_attr():
+    # Regression: ollama 0.6.x Model objects expose a .model field, not .name.
+    # ModelManager.list() must handle both shapes.
+    class M:
+        def __init__(self, n):
+            self.model = n  # no name attr, like ollama 0.6.2
+    class R:
+        models = [M('qwen3.8:9b'), M('llama:7b')]
+    async def fake_list():
+        return R()
+    c = type('C', (), {'list': staticmethod(lambda: fake_list())})()
+    mm = ModelManager(c)
+    names = _run(mm.list())
+    assert 'qwen3.8:9b' in names
+    assert 'llama:7b' in names
+    assert _run(mm.exists('qwen3.8:9b')) is True
+    assert _run(mm.exists('missing')) is False
+
+
 # ── model-name helpers ─────────────────────────────────────────────────────
 def test_split_model():
     assert split_model("qwen3.8:27b") == ("qwen3.8", "27b")

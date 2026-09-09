@@ -36,7 +36,10 @@ class ModelManager:
     async def list(self) -> List[str]:
         """Return model names from Ollama's /api/tags."""
         resp = await self._client.list()
-        return [m.name for m in (resp.models or [])]
+        return [
+            (getattr(m, "name", None) or getattr(m, "model", None) or str(m))
+            for m in (resp.models or [])
+        ]
 
     async def exists(self, name: str) -> bool:
         """True iff Ollama has a model with this exact name (including tag)."""
