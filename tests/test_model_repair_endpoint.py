@@ -29,9 +29,12 @@ def _run2(coro):
     return _asyncio.new_event_loop().run_until_complete(coro)
 
 
-def test_endpoint_repair_success():
+def test_endpoint_repair_success(monkeypatch):
     fake = FakeOllamaClient(present=["Qwen3.8-27B:IQ3_S"])
     client, state = _client_with_gw(fake)
+    async def _fake_create(self, name, modelfile):
+        fake.present.add(name)
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
     r = client.post("/v1/models/repair", json={
         "model": "Qwen3.8-27B:IQ3_S", "renderer": "qwen3.8", "parser": "qwen3.5",
     })
@@ -71,9 +74,16 @@ def test_endpoint_repair_original_not_found_500():
     assert r.json()["error"]["repairable"] is True
 
 
-def test_endpoint_repair_create_failure_500_keeps_original():
-    fake = FakeOllamaClient(present=["m:t"], fail_create=True)
+def test_endpoint_repair_create_failure_500_keeps_original(monkeypatch):
+    """CLI create failure surfaces as HTTP 500 with code=CREATE_FAILED and
+    the original model is kept (no half-applied state)."""
+    from src.model_manager import CreateError
+    fake = FakeOllamaClient(present=["m:t"])
     client, _ = _client_with_gw(fake)
+    async def _fake_create(self, name, modelfile):
+        raise CreateError("ollama create failed (exit 1): invalid renderer",
+                          exit_code=1, stdout="", stderr="invalid renderer")
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
     r = client.post("/v1/models/repair", json={"model": "m:t", "renderer": "r"})
     assert r.status_code == 500
     assert r.json()["error"]["code"] == "CREATE_FAILED"

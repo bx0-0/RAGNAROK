@@ -283,7 +283,7 @@ Creates a **derived** Ollama model that **reuses the same weights**
 (FROM <original>) but applies the supplied runtime config, then safely
 switches the gateway over to it:
 
-1. Create the derived model from a Modelfile (FROM <orig>, RENDERER <r>, PARSER <p>).
+1. Create the derived model from a Modelfile (FROM <orig>, RENDERER <r>, PARSER <p>) via the Ollama CLI (`ollama create <derived> -f <Modelfile>`); the CLI is the only path that accepts the custom RENDERER/PARSER directives.
 2. **Verify** the derived model actually serves a chat (a minimal chat probe — system + user, 1 token — exercising the same chat-template path the client will hit after repair).
 3. Switch the internal mapping so the **original name** routes to the derived model.
 4. Delete the original (best-effort) — **only after** the mapping switch succeeds.

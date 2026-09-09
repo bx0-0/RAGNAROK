@@ -25,10 +25,9 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-import ollama
 
 from src.logging import logger
-from src.model_manager import ModelManager
+from src.model_manager import ModelManager, CreateError
 
 # Suffix that identifies a RAGNAROK-derived repaired model.
 REPAIRED_SUFFIX = "ragnarok-repaired"
@@ -258,11 +257,13 @@ class RepairManager:
             modelfile = self.build_modelfile(model, renderer, parser)
             try:
                 await self._models.create_from_modelfile(derived_name, modelfile)
-            except ollama.ResponseError as e:
+            except CreateError as e:
+                if e.stderr:
+                    logger.warning(f"repair({model}) CLI stderr: {e.stderr!r}")
                 raise RepairError(
-                    f"failed to create derived model: {e.error}", code="CREATE_FAILED",
+                    f"failed to create derived model: {e}", code="CREATE_FAILED",
                 ) from e
-            except Exception as e:  # connection etc.
+            except Exception as e:  # unexpected (e.g. temp-file crash)
                 raise RepairError(
                     f"failed to create derived model: {e}", code="CREATE_FAILED",
                 ) from e

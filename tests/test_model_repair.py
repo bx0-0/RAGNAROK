@@ -13,6 +13,7 @@ Covers the acceptance matrix:
                   unknown error -> normal path / no automatic repair
 """
 import asyncio
+import io
 import os
 import sys
 from types import SimpleNamespace as NS
@@ -37,13 +38,11 @@ from src.retry import RetryPolicy
 
 # ── Fake Ollama AsyncClient (records calls, controllable state) ─────────────
 class FakeOllamaClient:
-    def __init__(self, present=(), fail_create=False, fail_verify=False, fail_list=False):
+    def __init__(self, present=(), fail_verify=False, fail_list=False):
         self.present = set(present)
-        self.fail_create = fail_create
         self.fail_verify = fail_verify
         self.fail_list = fail_list
         self.calls = []          # list of (method, kwargs)
-        self.creations = []      # (name, modelfile)
         self.modelfiles = {}     # name -> raw modelfile (as Ollama would store it)
 
     def _record(self, m, **kw):
@@ -79,21 +78,6 @@ class FakeOllamaClient:
         if self.fail_verify:
             raise ollama.ResponseError("bad renderer", 500)
         return NS(message=NS(content="ok"), done=True, eval_count=1)
-
-    async def _request_raw(self, method, path, json=None):
-        self._record("create", path=path, json=json)
-        if self.fail_create:
-            raise ollama.ResponseError("create boom", 500)
-        name = json["name"]
-        self.present.add(name)
-        mf = json.get("modelfile", "")
-        self.creations.append((name, mf))
-        self.modelfiles[name] = mf
-        class _R:
-            def json(self):
-                return {"status": "success"}
-        return _R()
-
 
 # ── Model existence / ensure_available ─────────────────────────────────────
 def _run(coro):
@@ -176,9 +160,18 @@ def test_make_repaired_name_deterministic_and_valid():
 
 
 # ── RepairManager: happy path ──────────────────────────────────────────────
-def test_repair_creates_derived_and_switches_mapping():
+def test_repair_creates_derived_and_switches_mapping(monkeypatch):
     c = FakeOllamaClient(present=["Qwen3.8-27B:IQ3_S"])
     rm = RepairManager(ModelManager(c))
+    # Capture the (name, modelfile) ModelManager would pass to the CLI;
+    # also register the derived name with the fake so exists() passes later.
+    captured = []
+    async def _fake_create(self, name, modelfile):
+        captured.append((name, modelfile))
+        c.present.add(name)
+        c.modelfiles[name] = modelfile
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
+
     res = _run(rm.repair("Qwen3.8-27B:IQ3_S", "qwen3.8", "qwen3.5"))
 
     assert res["status"] == "success"
@@ -191,35 +184,48 @@ def test_repair_creates_derived_and_switches_mapping():
     assert "Qwen3.8-27B:IQ3_S" not in c.present
     assert derived in c.present
     # creation used a Modelfile FROM the original with renderer/parser
-    name, modelfile = c.creations[-1]
+    assert len(captured) == 1
+    name, modelfile = captured[0]
     assert name == derived
     assert "FROM Qwen3.8-27B:IQ3_S" in modelfile
     assert "RENDERER qwen3.8" in modelfile
     assert "PARSER qwen3.5" in modelfile
 
 
-def test_repair_no_auto_download():
+def test_repair_no_auto_download(monkeypatch):
     """If the original exists, repair must not pull it again."""
     c = FakeOllamaClient(present=["m:t"])
     rm = RepairManager(ModelManager(c))
+    async def _fake_create(self, name, modelfile):
+        c.present.add(name)
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
     _run(rm.repair("m:t", "r", "p"))
     assert not any(m == "pull" for m, _ in c.calls)
 
 
-def test_repair_idempotent_repeated_identical():
+def test_repair_idempotent_repeated_identical(monkeypatch):
     c = FakeOllamaClient(present=["m:t"])
     rm = RepairManager(ModelManager(c))
+    counter = {"n": 0}
+    async def _fake_create(self, name, modelfile):
+        counter["n"] += 1
+        c.present.add(name)
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
+
     r1 = _run(rm.repair("m:t", "qwen3.8", "qwen3.5"))
-    created_first = len(c.creations)
+    created_first = counter["n"]
     r2 = _run(rm.repair("m:t", "qwen3.8", "qwen3.5"))
     assert r1["repaired_model"] == r2["repaired_model"]
-    # second call did NOT create a new model
-    assert len(c.creations) == created_first
+    # second call did NOT invoke create again (idempotent reuse)
+    assert counter["n"] == created_first
 
 
-def test_repair_different_config_creates_different():
+def test_repair_different_config_creates_different(monkeypatch):
     c = FakeOllamaClient(present=["m:t"])
     rm = RepairManager(ModelManager(c))
+    async def _fake_create(self, name, modelfile):
+        c.present.add(name)
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
     r1 = _run(rm.repair("m:t", "aa", "bb"))
     # after first repair, original is deleted; recreate original for 2nd config
     c.present.add("m:t")
@@ -227,9 +233,12 @@ def test_repair_different_config_creates_different():
     assert r1["repaired_model"] != r2["repaired_model"]
 
 
-def test_repair_mapping_updates_after_success():
+def test_repair_mapping_updates_after_success(monkeypatch):
     c = FakeOllamaClient(present=["m:t"])
     rm = RepairManager(ModelManager(c))
+    async def _fake_create(self, name, modelfile):
+        c.present.add(name)
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
     before = rm.resolve("m:t")
     assert before == "m:t"
     res = _run(rm.repair("m:t", "r", "p"))
@@ -237,9 +246,18 @@ def test_repair_mapping_updates_after_success():
 
 
 # ── RepairManager: failure-safety ──────────────────────────────────────────
-def test_create_failure_keeps_original():
-    c = FakeOllamaClient(present=["m:t"], fail_create=True)
+def test_create_failure_keeps_original(monkeypatch):
+    """When ollama create fails, the original model must be left intact and
+    the mapping unchanged."""
+    c = FakeOllamaClient(present=["m:t"])
     rm = RepairManager(ModelManager(c))
+
+    from src.model_manager import CreateError
+    async def _fake_create(self, name, modelfile):
+        raise CreateError("ollama create m:t-...-xxx failed (exit 1): bad renderer",
+                          exit_code=1, stdout="", stderr="bad renderer")
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
+
     with pytest.raises(RepairError) as ei:
         _run(rm.repair("m:t", "r", "p"))
     assert ei.value.code == "CREATE_FAILED"
@@ -247,9 +265,12 @@ def test_create_failure_keeps_original():
     assert rm.resolve("m:t") == "m:t", "mapping must be unchanged"
 
 
-def test_verify_failure_keeps_original_and_cleans_derived():
+def test_verify_failure_keeps_original_and_cleans_derived(monkeypatch):
     c = FakeOllamaClient(present=["m:t"], fail_verify=True)
     rm = RepairManager(ModelManager(c))
+    async def _fake_create(self, name, modelfile):
+        c.present.add(name)   # derived "exists" so _verify reaches the chat probe
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
     with pytest.raises(RepairError) as ei:
         _run(rm.repair("m:t", "r", "p"))
     assert ei.value.code == "VERIFY_FAILED"
@@ -272,7 +293,7 @@ def test_invalid_params_no_renderer_or_parser():
     assert ei.value.code == "INVALID_PARAMS"
 
 
-def test_delete_failure_does_not_break_success():
+def test_delete_failure_does_not_break_success(monkeypatch):
     """Even if delete(original) fails, the repair (mapping) already succeeded."""
     class C(FakeOllamaClient):
         async def delete(self, model=None, **kw):
@@ -280,6 +301,9 @@ def test_delete_failure_does_not_break_success():
             raise ollama.ResponseError("delete refused", 500)
     c = C(present=["m:t"])
     rm = RepairManager(ModelManager(c))
+    async def _fake_create(self, name, modelfile):
+        c.present.add(name)
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
     res = _run(rm.repair("m:t", "r", "p"))
     assert res["status"] == "success"
     assert rm.resolve("m:t") != "m:t"
@@ -399,6 +423,102 @@ def test_reconstruct_does_not_clobber_existing_mapping():
         parser="p", cfg_key=_cfg_key("other", "p"))
     _run(mgr.reconstruct_from_ollama())
     assert mgr.resolve("qwen:9b") == "qwen-ragnarok-repaired-XXXX"
+
+
+
+# ── CLI-based create_from_modelfile (the new mechanism) ─────────────────────
+def test_cli_invocation_exact_args_and_modelfile_content(monkeypatch):
+    """Verify the exact subprocess.run call shape:
+    [ollama, create, <derived>, -f, <tmp>], and that the temporary
+    Modelfile contains the expected FROM / RENDERER / PARSER lines.
+    The temp file must be removed afterwards.
+    """
+    import subprocess as _sp
+    import os as _os
+    captured = {}
+
+    def _fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["kw"] = kw
+        tmp = cmd[4]
+        captured["tmp_path"] = tmp
+        captured["modelfile"] = io.open(tmp, "r", encoding="utf-8").read()
+        return _sp.CompletedProcess(cmd, 0, stdout=b"ok\n", stderr=b"")
+    monkeypatch.setattr(_sp, "run", _fake_run)
+
+    mm = ModelManager(FakeOllamaClient())
+    _run(mm.create_from_modelfile(
+        "derived:tag", "FROM orig:tag\nRENDERER qwen3.8\nPARSER qwen3.5\n"))
+
+    assert captured["cmd"][:4] == ["ollama", "create", "derived:tag", "-f"]
+    assert captured["cmd"][4] == captured["tmp_path"]
+    assert not _os.path.exists(captured["tmp_path"]), "temp modelfile must be removed"
+    assert "FROM orig:tag" in captured["modelfile"]
+    assert "RENDERER qwen3.8" in captured["modelfile"]
+    assert "PARSER qwen3.5" in captured["modelfile"]
+
+
+def test_cli_nonzero_exit_raises_create_error_with_stderr(monkeypatch):
+    """A non-zero exit from `ollama create` must raise CreateError whose
+    message includes the stderr text (so the real Ollama error is not lost)."""
+    import subprocess as _sp
+    from src.model_manager import CreateError
+    monkeypatch.setattr(_sp, "run", lambda cmd, **kw: _sp.CompletedProcess(
+        cmd, 1, stdout=b"", stderr=b"invalid renderer 'x'\n"))
+    mm = ModelManager(FakeOllamaClient())
+    with pytest.raises(CreateError) as ei:
+        _run(mm.create_from_modelfile("d:t", "FROM o:t\nRENDERER x\nPARSER y\n"))
+    assert ei.value.exit_code == 1
+    assert "invalid renderer" in ei.value.stderr
+    assert "invalid renderer" in str(ei.value)
+
+
+def test_cli_temp_file_cleanup_on_failure(monkeypatch):
+    """Even when `ollama create` exits non-zero, the temporary Modelfile
+    must be removed (no permanent files left behind)."""
+    import subprocess as _sp
+    import os as _os
+    seen_tmps = []
+    def _fake_run(cmd, **kw):
+        seen_tmps.append(cmd[4])
+        return _sp.CompletedProcess(cmd, 1, stdout=b"", stderr=b"boom\n")
+    monkeypatch.setattr(_sp, "run", _fake_run)
+    mm = ModelManager(FakeOllamaClient())
+    with pytest.raises(Exception):
+        _run(mm.create_from_modelfile("d:t", "FROM o:t\n"))
+    assert len(seen_tmps) == 1
+    assert not _os.path.exists(seen_tmps[0]), "temp file must be removed on failure"
+
+
+def test_cli_file_not_found_raises_create_error(monkeypatch):
+    """If the `ollama` binary is missing, raise CreateError (not raw
+    FileNotFoundError) so the repair_manager's CREATE_FAILED path still fires."""
+    import subprocess as _sp
+    from src.model_manager import CreateError
+    def _raise(cmd, **kw):
+        raise FileNotFoundError("ollama")
+    monkeypatch.setattr(_sp, "run", _raise)
+    mm = ModelManager(FakeOllamaClient())
+    with pytest.raises(CreateError) as ei:
+        _run(mm.create_from_modelfile("d:t", "FROM o:t\n"))
+    assert "not found" in str(ei.value).lower()
+
+
+def test_repair_cli_failure_original_intact(monkeypatch):
+    """End-to-end: when the CLI fails, the original model must remain present
+    and the mapping must be unchanged (no half-applied state)."""
+    from src.model_manager import CreateError
+    c = FakeOllamaClient(present=["Qwen3.8-27B:IQ3_S"])
+    rm = RepairManager(ModelManager(c))
+    async def _fake_create(name, modelfile):
+        raise CreateError("ollama create failed (exit 1): invalid renderer",
+                          exit_code=1, stdout="", stderr="invalid renderer")
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
+    with pytest.raises(RepairError) as ei:
+        _run(rm.repair("Qwen3.8-27B:IQ3_S", "qwen3.8", "qwen3.5"))
+    assert ei.value.code == "CREATE_FAILED"
+    assert "Qwen3.8-27B:IQ3_S" in c.present
+    assert rm.resolve("Qwen3.8-27B:IQ3_S") == "Qwen3.8-27B:IQ3_S"
 
 
 # ── Streaming: repairable Ollama error -> REPAIR_AVAILABLE SSE frame (item 12) ─
