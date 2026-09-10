@@ -8,6 +8,7 @@ import ollama
 import uvloop
 import uvicorn
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import (
@@ -33,6 +34,7 @@ from src.gc import ModelGC
 from src.routes import register_routers
 from src.model_manager import ModelManager
 from src.repair_manager import RepairManager
+from src.routes.models import repair_validation_error
 from src.logging import logger, _open_log_fh, _log_fh as _gw_log_fh
 
 
@@ -111,6 +113,9 @@ app.add_middleware(
 )
 
 register_routers(app)
+# The repair endpoint is the only route with a Pydantic body; keep its
+# validation errors in RAGNAROK's 400 error shape (FastAPI default is 422).
+app.exception_handlers[RequestValidationError] = repair_validation_error
 
 
 def run_server():

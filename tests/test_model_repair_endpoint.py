@@ -22,6 +22,10 @@ def _client_with_gw(fake_ollama, state=None):
     app = FastAPI()
     app.state.gw = state
     app.include_router(models_router)
+    # mirror server.py: validation errors -> 400 in RAGNAROK error shape
+    from fastapi.exceptions import RequestValidationError
+    from src.routes.models import repair_validation_error
+    app.exception_handlers[RequestValidationError] = repair_validation_error
     return TestClient(app), state
 
 

@@ -3,15 +3,29 @@ POST /v1/models/unload — stop active gens for a model, then unload it from VRA
 """
 
 from fastapi import APIRouter, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-
-import orjson
 
 from src.config import _MODEL_LIST, MODEL_NUM_CTX, MODEL_NAME
 from src.state import _get_state, ask_ollama_unload
 from src.models.repair import RepairRequest
 from src.repair_manager import RepairError
 from src.logging import logger
+
+def repair_validation_error(request: Request, exc: RequestValidationError):
+    """Validation errors for the repair body -> 400 in RAGNAROK error shape
+    (FastAPI's default would be 422 with a different payload)."""
+    detail = "; ".join(
+        f"{'.'.join(str(part) for part in e['loc'][1:])}: {e['msg']}"
+        for e in exc.errors()
+    )
+    return JSONResponse(
+        status_code=400,
+        content={"error": {"message": "Invalid repair request",
+                           "type": "invalid_request_error",
+                           "detail": detail[:160]}},
+    )
+
 
 router = APIRouter()
 
@@ -81,7 +95,7 @@ async def unload_model_endpoint(request: Request):
 
 
 @router.post("/v1/models/repair")
-async def repair_model_endpoint(request: Request):
+async def repair_model_endpoint(request: Request, req: RepairRequest):
     """Explicit, user-driven runtime repair.
 
     Creates a derived Ollama model that reuses the same underlying weights
@@ -99,16 +113,6 @@ async def repair_model_endpoint(request: Request):
     state = _get_state(request)
     if state.repairs is None:
         return JSONResponse(status_code=503, content={"error": {"message": "repair subsystem unavailable", "type": "server_error"}})
-
-    try:
-        body = orjson.loads(await request.body())
-        req = RepairRequest(**body)
-    except Exception as e:
-        return JSONResponse(
-            status_code=400,
-            content={"error": {"message": "Invalid repair request", "type": "invalid_request_error",
-                               "detail": str(e)[:160]}},
-        )
 
     try:
         result = await state.repairs.repair(req.model, req.renderer, req.parser)
