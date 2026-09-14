@@ -498,6 +498,74 @@ def test_ensure_python_deps_fails_when_setup_fails():
     assert "dependency installation failed" in r.stderr
 
 
+# ── server ensure: ragnrok_create_ensure_ollama_server ──
+def _ollama_toggle_shim(d):
+    """Fake `ollama`. Every call is appended to SHIM_LOG.
+    `list` succeeds if OLLAMA_LIST_OK=1 or $SHIM_DIR/ready exists.
+    `serve` creates $SHIM_DIR/ready only when OLLAMA_SERVE_READY=1
+    (models the server coming up after being started)."""
+    exe = d / "ollama"
+    exe.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "$*" >> "${SHIM_LOG:-/dev/null}"\n'
+        'case "$1" in\n'
+        '  list) if [ "${OLLAMA_LIST_OK:-0}" = "1" ] || [ -f "${SHIM_DIR:-/nonexistent}/ready" ]; then exit 0; fi; exit 1 ;;\n'
+        '  serve) if [ "${OLLAMA_SERVE_READY:-0}" = "1" ]; then touch "${SHIM_DIR}/ready"; fi ;;\n'
+        "esac\n"
+        "exit 0\n"
+    )
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    return d
+
+
+def test_server_ensure_noop_when_reachable():
+    py = _ollama_toggle_shim(_tmpdir("oll-reach"))
+    r = run_bash(
+        "ragnrok_create_ensure_ollama_server",
+        env={"SHIM_LOG": str(py / "log"), "SHIM_DIR": str(py), "OLLAMA_LIST_OK": "1"},
+        path_extra=str(py),
+    )
+    assert r.returncode == 0, r.stderr
+    calls = (py / "log").read_text().split()
+    assert calls.count("list") == 1 and "serve" not in calls  # probed once, never started
+
+
+def test_server_ensure_starts_when_down():
+    py = _ollama_toggle_shim(_tmpdir("oll-down"))
+    r = run_bash(
+        "ragnrok_create_ensure_ollama_server",
+        env={
+            "SHIM_LOG": str(py / "log"),
+            "SHIM_DIR": str(py),
+            "OLLAMA_LIST_OK": "0",
+            "OLLAMA_SERVE_READY": "1",
+            "RAGNROK_OLLAMA_WAIT": "5",
+        },
+        path_extra=str(py),
+    )
+    assert r.returncode == 0, r.stderr
+    calls = (py / "log").read_text().split()
+    assert "serve" in calls  # started `ollama serve` in the background
+    assert calls.count("list") >= 2  # initial probe + re-probes after start
+
+
+def test_server_ensure_fails_when_never_ready():
+    py = _ollama_toggle_shim(_tmpdir("oll-never"))
+    r = run_bash(
+        "ragnrok_create_ensure_ollama_server",
+        env={
+            "SHIM_LOG": str(py / "log"),
+            "SHIM_DIR": str(py),
+            "OLLAMA_LIST_OK": "0",
+            "OLLAMA_SERVE_READY": "0",  # server never comes up
+            "RAGNROK_OLLAMA_WAIT": "2",  # keep the test fast
+        },
+        path_extra=str(py),
+    )
+    assert r.returncode == 1
+    assert "did not become ready" in r.stderr
+
+
 # ── the REUSED Python API itself (ModelManager.create_from_modelfile) ────────
 # This is the exact code path `ragnrok create` delegates to. We run it with the
 # `ollama` binary replaced by a PATH shim that records `create <name> -f <tmp>`,

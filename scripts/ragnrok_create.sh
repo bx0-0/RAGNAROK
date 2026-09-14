@@ -21,6 +21,9 @@
 #     that accepts the custom RENDERER / PARSER directives).
 #   * If the 'ollama' Python package is missing, scripts/setup.sh is run
 #     once (the same install step bash start.sh performs) before creating.
+#   * If the Ollama server is not running, `ollama serve` is started in
+#     the background (same pattern as scripts/install_model.sh) and the
+#     CLI waits for it to become ready.
 #
 # Modelfile produced:
 #   FROM <main-model-path>
@@ -81,6 +84,31 @@ ragnrok_create_ensure_python_deps() {
         return 0
     fi
     echo -e "${RED}Error: dependency installation failed — see setup output above.${NC}" >&2
+    return 1
+}
+
+# ── ensure the Ollama server is running ─────────────────────────────────────
+# `ollama create` (run by the Python bridge) needs a live server. Probe
+# with `ollama list`; if unreachable, start `ollama serve` in the
+# background (same pattern as scripts/install_model.sh) and poll until
+# ready. The server keeps running for the session/kernel lifetime,
+# matching what start.sh leaves behind.
+ragnrok_create_ensure_ollama_server() {
+    local RED="${RED:-\033[0;31m}" BOLD="${BOLD:-\033[1m}" NC="${NC:-\033[0m}"
+    if ollama list >/dev/null 2>&1; then
+        return 0
+    fi
+    echo -e "${BOLD}Ollama server not running — starting ollama serve...${NC}"
+    ollama serve >/dev/null 2>&1 &
+    local wait_s="${RAGNROK_OLLAMA_WAIT:-15}"
+    local i
+    for i in $(seq 1 "$wait_s"); do
+        if ollama list >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo -e "${RED}Error: Ollama server did not become ready (waited ${wait_s}s).${NC}" >&2
     return 1
 }
 
@@ -215,6 +243,8 @@ ragnrok_create_main() {
 
     # ── ensure the Python deps (ollama client) exist ──
     ragnrok_create_ensure_python_deps || return 1
+    # ── ensure the Ollama server is running ──
+    ragnrok_create_ensure_ollama_server || return 1
 
     local PYTHONPATH="${PYTHONPATH:-}"
     PYTHONPATH="${RAGNROK_REPO_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
