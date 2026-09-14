@@ -19,6 +19,8 @@
 #   * Modelfile -> `ollama create` goes through the EXISTING
 #     src.model_manager.ModelManager.create_from_modelfile() (the proven path
 #     that accepts the custom RENDERER / PARSER directives).
+#   * If the 'ollama' Python package is missing, scripts/setup.sh is run
+#     once (the same install step bash start.sh performs) before creating.
 #
 # Modelfile produced:
 #   FROM <main-model-path>
@@ -60,6 +62,26 @@ ragnrok_create_check_value() {
         return 1
     fi
     return 0
+}
+
+# ── ensure the Python dependencies (the ollama client package) exist ──
+# The create bridge imports src.model_manager, which imports `ollama`.
+# If that import fails, run scripts/setup.sh ONCE — the same install step
+# `bash start.sh` performs in step 1/4 — rather than duplicating its
+# install logic here. Idempotent: a no-op when deps are already present.
+ragnrok_create_ensure_python_deps() {
+    # Color fallbacks so this works when called outside ragnrok_create_main
+    # (which owns its own local color vars; set -u safe).
+    local RED="${RED:-\033[0;31m}" BOLD="${BOLD:-\033[1m}" NC="${NC:-\033[0m}"
+    if python3 -c "import ollama" >/dev/null 2>&1; then
+        return 0
+    fi
+    echo -e "${BOLD}Python dependencies missing (ollama client) — running scripts/setup.sh...${NC}"
+    if bash "${RAGNROK_REPO_ROOT}/scripts/setup.sh"; then
+        return 0
+    fi
+    echo -e "${RED}Error: dependency installation failed — see setup output above.${NC}" >&2
+    return 1
 }
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -190,6 +212,10 @@ ragnrok_create_main() {
         echo -e "${RED}Error: RAGNROK_REPO_ROOT is not set (use the 'ragnrok' dispatcher).${NC}" >&2
         return 1
     fi
+
+    # ── ensure the Python deps (ollama client) exist ──
+    ragnrok_create_ensure_python_deps || return 1
+
     local PYTHONPATH="${PYTHONPATH:-}"
     PYTHONPATH="${RAGNROK_REPO_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
 

@@ -418,6 +418,86 @@ def test_dispatcher_help():
     assert "create" in r.stdout and "--list" in r.stdout and "hf" in r.stdout
 
 
+# ── auto-install: ragnrok_create_ensure_python_deps ──
+def _py3_shim(d, exit_code):
+    """A fake python3 that records its args and exits with exit_code."""
+    exe = d / "python3"
+    exe.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "$*" > "${SHIM_LOG:-/dev/null}"\n'
+        f"exit {exit_code}\n"
+    )
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    return d
+
+
+def _fake_setup(repo_dir, exit_code=0):
+    """Create <repo>/scripts/setup.sh recording its invocation."""
+    sd = repo_dir / "scripts"
+    sd.mkdir(parents=True, exist_ok=True)
+    sh = sd / "setup.sh"
+    sh.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo ran >> "${SETUP_LOG:-/dev/null}"\n'
+        f"exit {exit_code}\n"
+    )
+    sh.chmod(sh.stat().st_mode | stat.S_IEXEC)
+
+
+def test_ensure_python_deps_noop_when_importable():
+    # python3 shim succeeds the `import ollama` probe -> setup.sh never runs
+    py = _py3_shim(_tmpdir("py-ok"), 0)
+    repo = _tmpdir("repo-ok")
+    _fake_setup(repo, 0)
+    r = run_bash(
+        "ragnrok_create_ensure_python_deps",
+        env={
+            "RAGNROK_REPO_ROOT": str(repo),
+            "SHIM_LOG": str(py / "log"),
+            "SETUP_LOG": str(repo / "setup.log"),
+        },
+        path_extra=str(py),
+    )
+    assert r.returncode == 0, r.stderr
+    assert not (repo / "setup.log").exists()  # setup.sh was never run
+    # the probe ran exactly once
+    assert "import ollama" in (py / "log").read_text()
+
+
+def test_ensure_python_deps_runs_setup_when_missing():
+    py = _py3_shim(_tmpdir("py-missing"), 1)  # import ollama fails
+    repo = _tmpdir("repo-setup")
+    _fake_setup(repo, 0)
+    r = run_bash(
+        "ragnrok_create_ensure_python_deps",
+        env={
+            "RAGNROK_REPO_ROOT": str(repo),
+            "SHIM_LOG": str(py / "log"),
+            "SETUP_LOG": str(repo / "setup.log"),
+        },
+        path_extra=str(py),
+    )
+    assert r.returncode == 0, r.stderr
+    assert (repo / "setup.log").read_text().split() == ["ran"]  # setup.sh ran once
+
+
+def test_ensure_python_deps_fails_when_setup_fails():
+    py = _py3_shim(_tmpdir("py-missing2"), 1)
+    repo = _tmpdir("repo-setupfail")
+    _fake_setup(repo, 1)
+    r = run_bash(
+        "ragnrok_create_ensure_python_deps",
+        env={
+            "RAGNROK_REPO_ROOT": str(repo),
+            "SHIM_LOG": str(py / "log"),
+            "SETUP_LOG": str(repo / "setup.log"),
+        },
+        path_extra=str(py),
+    )
+    assert r.returncode == 1
+    assert "dependency installation failed" in r.stderr
+
+
 # ── the REUSED Python API itself (ModelManager.create_from_modelfile) ────────
 # This is the exact code path `ragnrok create` delegates to. We run it with the
 # `ollama` binary replaced by a PATH shim that records `create <name> -f <tmp>`,
