@@ -27,6 +27,7 @@ MODEL_NUM_CTX: dict[str, int] = (
 NUM_CTX = _NUM_CTX_VALS[0]  # Backward-compat: first value (banner display)
 NUM_PREDICT = int(os.environ.get("NUM_PREDICT", "16384"))
 NUM_BATCH = int(os.environ.get("NUM_BATCH", "500"))
+DRAFT_NUM_PREDICT = int(os.environ.get("DRAFT_NUM_PREDICT", "4"))
 FLASH_ATTN = os.environ.get("FLASH_ATTN", "True").lower() in ("true", "1", "yes")
 NUM_GPU = int(os.environ.get("NUM_GPU", "-1"))
 KEEP_ALIVE = os.environ.get("KEEP_ALIVE", "60m")
@@ -81,6 +82,7 @@ KEEPALIVE_EXPIRY = int(os.environ.get("KEEPALIVE_EXPIRY", "300"))
 # ─── Per-model Ollama options ───
 _OLLAMA_OPTS_BASE = {
     "num_batch": NUM_BATCH,
+    "draft_num_predict": DRAFT_NUM_PREDICT,
     "flash_attn": FLASH_ATTN,
     "num_gpu": NUM_GPU,
     "num_predict": NUM_PREDICT,

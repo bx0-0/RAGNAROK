@@ -257,6 +257,8 @@ def test_create_normal_builds_modelfile_and_reuses_ollama():
     assert f"FROM {main}" in mf
     assert "RENDERER my-renderer" in mf
     assert "PARSER my-parser" in mf
+    # no MTP: no draft PARAMETER injected
+    assert "PARAMETER draft_num_predict" not in mf
     # model name derived from the main model file
     assert "my-model" in log.read_text().split()
 
@@ -281,6 +283,7 @@ def test_create_mtp_one_associated():
     mf = captured.read_text()
     assert f"FROM {main}" in mf
     assert f"FROM {proj}" in mf  # associated file passed through as a second FROM
+    assert "PARAMETER draft_num_predict 4" in mf  # MTP mode injects the draft param
 
 
 def test_create_mtp_three_associated():
@@ -306,6 +309,7 @@ def test_create_mtp_three_associated():
     # order preserved: main first, then associates
     assert f"FROM {main}" in mf
     assert mf.index(str(main)) < mf.index(str(a1)) < mf.index(str(a2)) < mf.index(str(a3))
+    assert "PARAMETER draft_num_predict 4" in mf
 
 
 def test_create_missing_file_is_clear_error():

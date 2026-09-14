@@ -25,6 +25,7 @@
 #   RENDERER <value>    (only if --render VALUE)
 #   PARSER <value>      (only if --parser VALUE)
 #   FROM <assoc-1-path> (one per associated file, in order — generic pass-through)
+#   PARAMETER draft_num_predict 4   (only in --mtp mode)
 #
 # Design note (documented assumption): the only Modelfile directive in this
 # codebase that references a weight file is `FROM` (see repair_manager /
@@ -107,6 +108,7 @@ ragnrok_create_main() {
                 echo "  ragnrok create --mtp model.gguf [assoc.gguf ...] [--parser NAME] [--render NAME] [--name NAME]"
                 echo ""
                 echo "  First file = main model. Extra files (--mtp) = associated files."
+                echo "  In --mtp mode, PARAMETER draft_num_predict 4 is added to the Modelfile."
                 echo "  --parser NAME / --render NAME set the renderer/parser (value required)."
                 echo "  --name sets the Ollama model name."
                 exit 0
@@ -166,6 +168,9 @@ ragnrok_create_main() {
     for (( i=1; i<${#RESOLVED[@]}; i++ )); do
         MF+=$'\n'"FROM ${RESOLVED[$i]}"
     done
+    if [ "$MTP" -eq 1 ]; then
+        MF+=$'\n'"PARAMETER draft_num_predict 4"
+    fi
 
     # ── echo a concise plan ────────────────────────────────────────────────
     echo -e "${BOLD}Ollama model:${NC} ${MODEL_NAME}"

@@ -24,6 +24,7 @@ MAX_CONCURRENT=1
 NUM_CTX=16384
 NUM_PREDICT=16384
 NUM_BATCH=500
+DRAFT_NUM_PREDICT=4
 FLASH_ATTN=True
 NUM_GPU=-1
 KEEP_ALIVE="60m"
@@ -62,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --num-ctx)        NUM_CTX=""; shift; while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do NUM_CTX="${NUM_CTX}${NUM_CTX:+ }$1"; shift; done ;;
         --num-predict)    NUM_PREDICT="$2"; shift 2 ;;
         --num-batch)      NUM_BATCH="$2"; shift 2 ;;
+        --draft-num-predict) DRAFT_NUM_PREDICT="$2"; shift 2 ;;
         --flash-attn)     FLASH_ATTN="$2"; shift 2 ;;
         --num-gpu)        NUM_GPU="$2"; shift 2 ;;
         --keep-alive)     KEEP_ALIVE="$2"; shift 2 ;;
@@ -86,6 +88,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --max-concurrent <n>          Max simultaneous requests (default: 2)"
             echo "  --num-predict <n>             Max tokens to generate per response (default: 16384)"
             echo "  --num-batch <n>               Decoding batch size (default: 500)"
+            echo "  --draft-num-predict <n>      Draft tokens for speculative decoding (default: 4)"
             echo "  --flash-attn <true|false>     Flash attention (default: true)"
             echo "  --num-gpu <n>                 GPU layers, -1 = all (default: -1)"
             echo "  --keep-alive <dur>            Keep model in RAM after idle (default: 60m)"
@@ -120,7 +123,7 @@ for M in $MODEL_NAME; do
     DISPLAY_MODELS="$DISPLAY_MODELS "
 done
 
-export MODEL_NAME FIRST_MODEL MAX_CONCURRENT NUM_CTX NUM_PREDICT NUM_BATCH
+export MODEL_NAME FIRST_MODEL MAX_CONCURRENT NUM_CTX NUM_PREDICT NUM_BATCH DRAFT_NUM_PREDICT
 export FLASH_ATTN NUM_GPU KEEP_ALIVE PORT DEBUG_MODE VERBOSE_LOG
 export TTS_ENABLED TTS_DEFAULT_ENGINE TTS_OMNIVOICE_DEVICE TTS_INFLECT_VARIANT TTS_MAX_CHARS
 export GC_IDLE_TIMEOUT GC_SWEEP_INTERVAL

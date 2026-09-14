@@ -11,6 +11,7 @@ All flags override `config/settings.env` values. Repeat `--model` to load multip
 | `--num-ctx <n>` | Context window in tokens | `16384` |
 | `--num-predict <n>` | Max tokens to generate per response | `16384` |
 | `--num-batch <n>` | Decoding batch size for throughput tuning | `500` |
+| `--draft-num-predict <n>` | Draft tokens per step for MTP speculative decoding (sent as an Ollama option) | `4` |
 | `--flash-attn <bool>` | Enable flash attention (reduces VRAM usage) | `True` |
 | `--num-gpu <n>` | GPU layers (-1 = all on GPU, 0 = CPU only) | `-1` |
 | `--keep-alive <dur>` | Keep model in RAM after last request (`60m`, `-1` = forever) | `60m` |
@@ -44,6 +45,7 @@ MAX_CONCURRENT=3
 NUM_CTX=100000
 NUM_PREDICT=16384
 NUM_BATCH=3000
+DRAFT_NUM_PREDICT=4
 FLASH_ATTN=True
 KEEP_ALIVE=60m
 
@@ -90,7 +92,7 @@ The `ragnrok` command (repo root) is a lightweight Bash CLI. No Python CLI frame
 |---|---|---|
 | `--download` | REPO (then optional FILE...) | `hf` subcommand — repository to download |
 | `--max-workers N` | yes | Parallel download workers |
-| `--mtp` | no (mode flag) | Treats 2nd+ positionals as associated files (generic pass-through; does not classify them) |
+| `--mtp` | no (mode flag) | Treats 2nd+ positionals as associated files (generic pass-through; does not classify them). Also adds `PARAMETER draft_num_predict 4` to the Modelfile |
 | `--parser NAME` | **yes** | Set the PARSER (a renderer/parser name); validated as a simple identifier |
 | `--render NAME` | **yes** | Set the RENDERER (a renderer/parser name); validated as a simple identifier |
 | `--name NAME` | **yes** | Override the derived Ollama model name |
