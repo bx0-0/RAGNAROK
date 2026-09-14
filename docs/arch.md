@@ -3,6 +3,7 @@
 ```
 kaggle-ollama-gateway/
 ├── start.sh                  # Main entry — run this
+├── ragnrok                   # ragnrok CLI (hf / --list / create) — model ops
 ├── assets/
 │   └── RAGNAROK.png          # Logo
 ├── config/
@@ -11,6 +12,10 @@ kaggle-ollama-gateway/
 │   ├── setup.sh              # Install Ollama + Python deps + cloudflared
 │   ├── install_model.sh      # Pull Ollama model(s)
 │   ├── install_tts.sh        # Download TTS models (OmniVoice + Inflect)
+│   ├── ragnrok_common.sh     # ragnrok shared helpers (storage dir, sizes, resolve)
+│   ├── ragnrok_hf.sh         # ragnrok hf — Hugging Face downloads
+│   ├── ragnrok_list.sh       # ragnrok --list — managed file listing
+│   ├── ragnrok_create.sh     # ragnrok create / create --mtp — Ollama model creation
 │   ├── tunnel_orchestrate.sh # Cloudflare tunnel lifecycle manager
 │   └── tunnel_*.sh           # Tunnel healthcheck, start, watchdog helpers
 ├── src/

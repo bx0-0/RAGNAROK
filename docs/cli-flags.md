@@ -70,3 +70,31 @@ Values are resolved in this priority (highest first):
 1. **CLI flag** on `bash start.sh` command line
 2. **settings.env** file (`source config/settings.env`)
 3. **Hardcoded default** in `start.sh` variable declaration
+
+---
+
+## ragnrok CLI
+
+The `ragnrok` command (repo root) is a lightweight Bash CLI. No Python CLI framework or new dependencies — `create` reuses the gateway's existing `ModelManager.create_from_modelfile` (the `ollama create -f` path that accepts the custom `RENDERER` / `PARSER` directives).
+
+| Command | Description |
+|---|---|
+| `ragnrok hf --download REPO [FILE...] [--max-workers N]` | Download file(s) from a Hugging Face repo into RAGNAROK storage |
+| `ragnrok --list` | List RAGNAROK-managed files (NAME / TYPE / SIZE), with LOCATION at the bottom |
+| `ragnrok create model.gguf [--parser NAME] [--render NAME] [--name NAME]` | Create an Ollama model from a local GGUF |
+| `ragnrok create --mtp model.gguf [assoc...] [--parser NAME] [--render NAME] [--name NAME]` | MTP / associated-file mode: first file is the main model, the rest are associated files |
+
+### Flags
+
+| Flag | Requires value | Description |
+|---|---|---|
+| `--download` | REPO (then optional FILE...) | `hf` subcommand — repository to download |
+| `--max-workers N` | yes | Parallel download workers |
+| `--mtp` | no (mode flag) | Treats 2nd+ positionals as associated files (generic pass-through; does not classify them) |
+| `--parser NAME` | **yes** | Set the PARSER (a renderer/parser name); validated as a simple identifier |
+| `--render NAME` | **yes** | Set the RENDERER (a renderer/parser name); validated as a simple identifier |
+| `--name NAME` | **yes** | Override the derived Ollama model name |
+
+> `--parser` / `--render` take an **explicit value** (e.g. `qwen3.8`) — they are not boolean toggles. Values are validated as a simple identifier (alnum, dot, dash, underscore).
+>
+> **Storage location:** Kaggle → `/kaggle/working/.ragnrok`, Colab → `/tmp/.ragnrok`, local → `~/.ragnrok`. Override with `RAGNROK_STORAGE_DIR`.

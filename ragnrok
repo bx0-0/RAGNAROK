@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# ragnrok — lightweight CLI for the RAGNAROK model gateway.
+#
+# Thin dispatcher: routes to the script modules in scripts/ and reuses the
+# existing Python model-management (src.model_manager) for `create`.
+#
+# Commands:
+#   ragnrok hf --download REPO [FILE...] [--max-workers N]
+#   ragnrok --list
+#   ragnrok create model.gguf [--parser NAME] [--render NAME] [--name NAME]
+#   ragnrok create --mtp model.gguf [assoc.gguf ...] [--parser NAME] [--render NAME] [--name NAME]
+#
+# No third-party Python CLI framework; no new Python dependencies.
+#
+
+set -euo pipefail
+
+# ── locate the repo root (this file lives at repo root) ─────────────────────
+DISPATCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export RAGNROK_REPO_ROOT="$DISPATCHER_DIR"
+
+# ── source the modules (no side effects on source) ──────────────────────────
+# shellcheck source=scripts/ragnrok_common.sh
+source "$DISPATCHER_DIR/scripts/ragnrok_common.sh"
+# shellcheck source=scripts/ragnrok_hf.sh
+source "$DISPATCHER_DIR/scripts/ragnrok_hf.sh"
+# shellcheck source=scripts/ragnrok_list.sh
+source "$DISPATCHER_DIR/scripts/ragnrok_list.sh"
+# shellcheck source=scripts/ragnrok_create.sh
+source "$DISPATCHER_DIR/scripts/ragnrok_create.sh"
+
+# ── usage ────────────────────────────────────────────────────────────────────
+ragnrok_usage() {
+    local BOLD='\033[1m' DIM='\033[2m' NC='\033[0m'
+    echo -e "${BOLD}ragnrok${NC} — RAGNAROK model gateway CLI"
+    echo ""
+    echo -e "${BOLD}Usage:${NC}"
+    echo "  ragnrok hf --download REPO [FILE...] [--max-workers N]"
+    echo "  ragnrok --list"
+    echo "  ragnrok create model.gguf [--parser NAME] [--render NAME] [--name NAME]"
+    echo "  ragnrok create --mtp model.gguf [assoc.gguf ...] [--parser NAME] [--render NAME] [--name NAME]"
+    echo ""
+    echo -e "${BOLD}Commands:${NC}"
+    echo "  hf --download   Download a model file (or files) from Hugging Face into storage."
+    echo "  --list          List RAGNAROK-managed files (NAME / TYPE / SIZE)."
+    echo "  create          Create an Ollama model from a local .gguf."
+    echo "                  --mtp: first file is the main model, the rest are associated files."
+    echo "                  --parser NAME / --render NAME set the renderer/parser (value required)."
+    echo ""
+    echo -e "${DIM}Storage location: see 'ragnrok --list' (LOCATION line).${NC}"
+}
+
+# ── dispatch ─────────────────────────────────────────────────────────────────
+main() {
+    local CMD="${1:-}"
+
+    case "$CMD" in
+        hf)
+            shift
+            ragnrok_hf_main "$@"
+            ;;
+        create)
+            shift
+            ragnrok_create_main "$@"
+            ;;
+        --list|list|-l)
+            ragnrok_list_main
+            ;;
+        --help|-h|help)
+            ragnrok_usage
+            ;;
+        "")
+            ragnrok_usage
+            exit 1
+            ;;
+        *)
+            echo "Error: unknown command: $CMD" >&2
+            echo "" >&2
+            ragnrok_usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

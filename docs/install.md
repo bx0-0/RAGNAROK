@@ -24,6 +24,8 @@ bash start.sh --model hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:Q8_0
 
 Browse [bartowski GGUF repos](https://huggingface.co/bartowski) for heavily optimized quantized models.
 
+> 💡 **`ragnrok` CLI:** download files straight into RAGNAROK storage with `./ragnrok hf --download <owner/repo> <file...> --max-workers 8`. This requires the `hf` CLI (`huggingface_hub[cli]`), available on Kaggle/Colab.
+
 ---
 
 ## Model Sources Quick Links

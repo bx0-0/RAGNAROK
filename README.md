@@ -121,6 +121,29 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
 
 ---
 
+## <img src="assets/search.png" width="50" align="middle"> ragnrok CLI
+
+A lightweight Bash CLI for managing models and files on Kaggle / Colab / local — Hugging Face downloads, a managed file listing, and Ollama model creation (including MTP + associated files). No Python dependencies; `create` reuses the gateway's existing model-management path.
+
+```bash
+# Download model file(s) from Hugging Face into RAGNAROK storage
+./ragnrok hf --download ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF \
+    Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf mmproj-Qwen3.8-27B-BF16.gguf --max-workers 8
+
+# List RAGNAROK-managed files
+./ragnrok --list
+
+# Create an Ollama model with a renderer/parser
+./ragnrok create model.gguf --parser my-parser --render my-renderer
+
+# MTP: first file = main model, the rest are associated files
+./ragnrok create --mtp model.gguf mmproj-1.gguf mmproj-2.gguf --parser p --render r
+```
+
+> `--parser NAME` / `--render NAME` each require an explicit value (a renderer/parser name). `--mtp` is a mode flag: it does not classify files. See [docs/cli-flags.md](docs/cli-flags.md#ragnrok-cli).
+
+---
+
 ## Documentation Index
 
 | Topic | Link | Description |
@@ -132,6 +155,7 @@ Add the gateway as a custom provider in `.pi/agent/models.json`:
 | 🔌 **API Reference** | [docs/api-reference.md](docs/api-reference.md) | All OpenAI-compatible endpoints |
 | 🛑 **Streaming Control** | [docs/api-reference.md](docs/api-reference.md#streaming-lifecycle--control) | Disconnect cancellation, stop / unload endpoints |
 | 🖥️ **Platform Guides** | [docs/install.md](docs/install.md) | Kaggle 30GB, Colab 15GB, local Linux setup |
+| 🧰 **ragnrok CLI** | [docs/cli-flags.md](docs/cli-flags.md#ragnrok-cli) | HF downloads, file listing, model creation (incl. MTP) |
 
 ---
 
