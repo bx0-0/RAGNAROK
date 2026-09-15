@@ -138,6 +138,26 @@ def test_list_handles_ollama_062_model_attr():
     assert _run(mm.exists('missing')) is False
 
 
+def test_exists_bare_name_matches_latest_tag():
+    # Locally created models appear in /api/tags as "name:latest".
+    c = FakeOllamaClient(present=["qwen3.8-27b-gsq-rco-iq3_s-mtp:latest"])
+    mm = ModelManager(c)
+    assert _run(mm.exists("qwen3.8-27b-gsq-rco-iq3_s-mtp")) is True
+    # exact names still match as before
+    assert _run(mm.exists("qwen3.8-27b-gsq-rco-iq3_s-mtp:latest")) is True
+    # other tags / unknown names do NOT match
+    assert _run(mm.exists("qwen3.8-27b-gsq-rco-iq3_s-mtp:other")) is False
+    assert _run(mm.exists("nope")) is False
+
+
+def test_exists_bare_name_no_match_without_latest():
+    # a bare name must not match a model that only has a different tag
+    c = FakeOllamaClient(present=["a:b", "c:latest"])
+    mm = ModelManager(c)
+    assert _run(mm.exists("a")) is False
+    assert _run(mm.exists("c")) is True
+    assert _run(mm.exists("c:latest")) is True
+
 # ── model-name helpers ─────────────────────────────────────────────────────
 def test_split_model():
     assert split_model("qwen3.8:27b") == ("qwen3.8", "27b")
@@ -190,6 +210,29 @@ def test_repair_creates_derived_and_switches_mapping(monkeypatch):
     assert "FROM Qwen3.8-27B:IQ3_S" in modelfile
     assert "RENDERER qwen3.8" in modelfile
     assert "PARSER qwen3.5" in modelfile
+
+
+def test_repair_bare_local_model_not_original_not_found(monkeypatch):
+    # Regression: ragnrok-created models list as "name:latest" in Ollama; the
+    # repair ORIGINAL_NOT_FOUND guard used an exact match on the bare name and
+    # wrongly rejected them.
+    c = FakeOllamaClient(present=["qwen3.8-27b-gsq-rco-iq3_s-mtp:latest"])
+    rm = RepairManager(ModelManager(c))
+    captured = []
+    async def _fake_create(self, name, modelfile):
+        captured.append((name, modelfile))
+        c.present.add(name)
+        c.modelfiles[name] = modelfile
+    monkeypatch.setattr(ModelManager, "create_from_modelfile", _fake_create)
+
+    res = _run(rm.repair("qwen3.8-27b-gsq-rco-iq3_s-mtp", "qwen3.8", "qwen3.5"))
+    assert res["status"] == "success"
+    assert len(captured) == 1
+    name, modelfile = captured[0]
+    assert "FROM qwen3.8-27b-gsq-rco-iq3_s-mtp" in modelfile
+    assert "RENDERER qwen3.8" in modelfile
+    assert "PARSER qwen3.5" in modelfile
+    assert rm.resolve("qwen3.8-27b-gsq-rco-iq3_s-mtp") == res["repaired_model"]
 
 
 def test_repair_no_auto_download(monkeypatch):

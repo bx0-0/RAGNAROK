@@ -68,9 +68,20 @@ class ModelManager:
         ]
 
     async def exists(self, name: str) -> bool:
-        """True iff Ollama has a model with this exact name (including tag)."""
-        names = await self.list()
-        return name in names
+        """True iff Ollama has a model with this name.
+
+        An exact `name:tag` matches as-is. A bare `name` also matches the
+        implicit `name:latest` tag - Ollama's /api/tags always returns locally
+        created models as `name:latest`, so a bare-name check (e.g. the repair
+        ORIGINAL_NOT_FOUND guard, or the CLI install step) would otherwise
+        wrongly report the model as missing and re-download it.
+        """
+        names = set(await self.list())
+        if name in names:
+            return True
+        if ":" not in name:
+            return f"{name}:latest" in names
+        return False
 
     async def show(self, name: str) -> Dict[str, Any]:
         """Return the raw Ollama /api/show payload for `name`.
