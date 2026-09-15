@@ -47,6 +47,8 @@ ragnrok_usage() {
     echo "  create          Create an Ollama model from a local .gguf."
     echo "                  --mtp: first file is the main model, the rest are associated files."
     echo "                  --parser NAME / --render NAME set the renderer/parser (value required)."
+    echo "                  On success the source .gguf file(s) are removed from storage."
+    echo "                  Set RAGNROK_KEEP_GGUF=1 to keep them."
     echo ""
     echo -e "${DIM}Storage location: see 'ragnrok --list' (LOCATION line).${NC}"
 }

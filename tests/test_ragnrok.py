@@ -369,7 +369,17 @@ def test_create_name_flag_sets_model_name():
 
 
 def test_create_ollama_failure_propagates():
-    shim = make_shim("ollama")
+    # dedicated shim: `list` succeeds (server reachable) so the failure
+    # comes from `create` (SHIM_EXIT), not from the server probe
+    shim = _tmpdir("shim-ollama-fail")
+    exe = shim / "ollama"
+    exe.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "$*" > "${SHIM_LOG:-/dev/null}"\n'
+        'if [ "$1" = "list" ]; then exit 0; fi\n'
+        'exit "${SHIM_EXIT:-1}"\n'
+    )
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     storage = _tmpdir("create-fail")
     main = storage / "boom.gguf"; main.write_text("x")
     captured = shim / "captured-modelfile"
@@ -389,6 +399,65 @@ def test_create_ollama_failure_propagates():
     # must NOT be a raw Python traceback
     assert "Traceback (most recent call last)" not in r.stderr
 
+
+def test_create_success_removes_source_ggufs():
+    shim = make_shim("ollama")
+    storage = _tmpdir("create-cleanup")
+    main = storage / "clean.gguf"; main.write_text("a")
+    assoc = storage / "proj.gguf"; assoc.write_text("b")
+    log = shim / "ollama.log"
+    r = run_bash(
+        "ragnrok_create_main --mtp 'clean.gguf' 'proj.gguf'",
+        env={
+            "RAGNROK_STORAGE_DIR": str(storage),
+            "SHIM_LOG": str(log),
+        },
+        path_extra=str(shim),
+    )
+    assert r.returncode == 0, r.stderr
+    # source GGUFs removed from storage on success (weights now in Ollama)
+    assert not main.exists() and not assoc.exists()
+    assert "Cleaned up source GGUF" in r.stdout
+    # success annotation points at start.sh with the derived model name
+    assert "bash start.sh --model clean" in r.stdout
+
+
+def test_create_success_keeps_ggufs_when_flagged():
+    shim = make_shim("ollama")
+    storage = _tmpdir("create-keep")
+    main = storage / "keep.gguf"; main.write_text("a")
+    log = shim / "ollama.log"
+    r = run_bash(
+        "ragnrok_create_main 'keep.gguf'",
+        env={
+            "RAGNROK_STORAGE_DIR": str(storage),
+            "SHIM_LOG": str(log),
+            "RAGNROK_KEEP_GGUF": "1",
+        },
+        path_extra=str(shim),
+    )
+    assert r.returncode == 0, r.stderr
+    assert main.exists()  # kept on request
+    assert "Cleaned up source GGUF" not in r.stdout
+
+
+def test_create_failure_keeps_source_ggufs():
+    shim = make_shim("ollama")
+    storage = _tmpdir("create-fail-keep")
+    main = storage / "fail-keep.gguf"; main.write_text("x")
+    log = shim / "ollama.log"
+    r = run_bash(
+        "ragnrok_create_main 'fail-keep.gguf'",
+        env={
+            "RAGNROK_STORAGE_DIR": str(storage),
+            "SHIM_LOG": str(log),
+            "SHIM_EXIT": "1",
+            "RAGNROK_OLLAMA_WAIT": "1",  # server-ensure probe fails fast
+        },
+        path_extra=str(shim),
+    )
+    assert r.returncode != 0
+    assert main.exists()  # never cleaned up on failure
 
 # ── dispatcher ───────────────────────────────────────────────────────────────
 def test_dispatcher_routes_list():
@@ -565,6 +634,77 @@ def test_server_ensure_fails_when_never_ready():
     assert r.returncode == 1
     assert "did not become ready" in r.stderr
 
+
+# ── install_model.sh: locally created models must not be re-pulled ──
+def _install_shims(d):
+    """Shims for a full `install_model.sh` run: `ollama` (list reads
+    $SHIM_LIST_FILE unless OLLAMA_LIST_FAIL=1; every call logged), plus
+    no-op `pgrep`/`pkill` so a real Ollama (if any) is left untouched."""
+    exe = d / "ollama"
+    exe.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "$*" >> "${SHIM_LOG:-/dev/null}"\n'
+        'case "$1" in\n'
+        '  list) if [ "${OLLAMA_LIST_FAIL:-0}" = "1" ]; then exit 1; fi; cat "${SHIM_LIST_FILE}" 2>/dev/null; exit 0 ;;\n'
+        "esac\n"
+        "exit 0\n"
+    )
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    for tool in ("pgrep", "pkill"):
+        t = d / tool
+        t.write_text("#!/usr/bin/env bash\nexit 1\n")
+        t.chmod(t.stat().st_mode | stat.S_IEXEC)
+    return d
+
+
+def _run_install(d, model_name, list_text, extra=None):
+    (d / "list.out").write_text(list_text)
+    env = dict(os.environ)
+    env.update({
+        "MODEL_NAME": model_name,
+        "OLLAMA_PULL_LOG": str(d / "pull.log"),
+        "SHIM_LOG": str(d / "log"),
+        "SHIM_LIST_FILE": str(d / "list.out"),
+        "PATH": str(d) + os.pathsep + env.get("PATH", os.defpath),
+    })
+    if extra:
+        env.update(extra)
+    return subprocess.run(
+        [BASH, str(SCRIPTS / "install_model.sh")],
+        capture_output=True, text=True, env=env, cwd=str(REPO),
+    )
+
+
+def test_install_model_cached_not_pulled():
+    # a locally created model shows up in `ollama list` as name:latest
+    d = _install_shims(_tmpdir("install-cached"))
+    LIST = ("NAME                    ID              SIZE     MODIFIED\n"
+            "qwen3.8-27b-gsq-rco-iq3_s-mtp:latest  abc123  5.0 GB   2 hours ago\n")
+    r = _run_install(d, "qwen3.8-27b-gsq-rco-iq3_s-mtp", LIST)
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert "already cached" in r.stdout
+    calls = " ".join((d / "log").read_text().split())
+    assert "pull" not in calls
+
+
+def test_install_model_missing_is_pulled():
+    d = _install_shims(_tmpdir("install-missing"))
+    LIST = ("NAME                    ID              SIZE     MODIFIED\n"
+            "unrelated-model:latest  abc123  1.0 GB   1 hour ago\n")
+    r = _run_install(d, "needed-model", LIST)
+    assert r.returncode == 0, r.stderr + r.stdout
+    calls = " ".join((d / "log").read_text().split())
+    assert "pull needed-model" in calls
+
+
+def test_install_model_fails_when_server_never_ready():
+    d = _install_shims(_tmpdir("install-never"))
+    r = _run_install(
+        d, "m", "NAME\n",
+        {"OLLAMA_LIST_FAIL": "1", "OLLAMA_READY_WAIT": "2"},
+    )
+    assert r.returncode == 1
+    assert "did not become ready" in r.stdout
 
 # ── the REUSED Python API itself (ModelManager.create_from_modelfile) ────────
 # This is the exact code path `ragnrok create` delegates to. We run it with the

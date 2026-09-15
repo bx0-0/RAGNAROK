@@ -83,7 +83,7 @@ The `ragnrok` command (repo root) is a lightweight Bash CLI. No Python CLI frame
 |---|---|
 | `ragnrok hf --download REPO [FILE...] [--max-workers N]` | Download file(s) from a Hugging Face repo into RAGNAROK storage |
 | `ragnrok --list` | List RAGNAROK-managed files (NAME / TYPE / SIZE), with LOCATION at the bottom |
-| `ragnrok create model.gguf [--parser NAME] [--render NAME] [--name NAME]` | Create an Ollama model from a local GGUF |
+| `ragnrok create model.gguf [--parser NAME] [--render NAME] [--name NAME]` | Create an Ollama model from a local GGUF (removes the source `.gguf` on success) |
 | `ragnrok create --mtp model.gguf [assoc...] [--parser NAME] [--render NAME] [--name NAME]` | MTP / associated-file mode: first file is the main model, the rest are associated files |
 
 ### Flags
@@ -98,5 +98,7 @@ The `ragnrok` command (repo root) is a lightweight Bash CLI. No Python CLI frame
 | `--name NAME` | **yes** | Override the derived Ollama model name |
 
 > `--parser` / `--render` take an **explicit value** (e.g. `qwen3.8`) — they are not boolean toggles. Values are validated as a simple identifier (alnum, dot, dash, underscore).
+>
+> **`create` housekeeping:** the CLI auto-installs the Python `ollama` dependency and auto-starts `ollama serve` when missing (reusing `scripts/setup.sh`). On a successful create, the source `.gguf` file(s) are removed from storage (weights now live in Ollama's model store); set `RAGNROK_KEEP_GGUF=1` to keep them.
 >
 > **Storage location:** Kaggle → `/kaggle/working/.ragnrok`, Colab → `/tmp/.ragnrok`, local → `~/.ragnrok`. Override with `RAGNROK_STORAGE_DIR`.

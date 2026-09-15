@@ -24,6 +24,9 @@
 #   * If the Ollama server is not running, `ollama serve` is started in
 #     the background (same pattern as scripts/install_model.sh) and the
 #     CLI waits for it to become ready.
+#   * On success, the source GGUF file(s) are removed from storage (the
+#     weights now live in Ollama's model store). Set RAGNROK_KEEP_GGUF=1
+#     to keep them.
 #
 # Modelfile produced:
 #   FROM <main-model-path>
@@ -281,5 +284,19 @@ except CreateError as e:
     fi
 
     echo -e "${GREEN}Created Ollama model: ${MODEL_NAME}${NC}"
+    echo -e "${DIM}Tip: start the gateway with  bash start.sh --model ${MODEL_NAME}${NC}"
+
+    # ── on success: remove the source GGUF file(s) from storage ──
+    # Weights are now in Ollama's model store; the GGUFs only occupy
+    # disk. Skipped with RAGNROK_KEEP_GGUF=1.
+    if [ "${RAGNROK_KEEP_GGUF:-0}" != "1" ]; then
+        local removed=0 f2
+        for f2 in "${RESOLVED[@]}"; do
+            rm -f "$f2" && removed=1
+        done
+        if [ "$removed" -eq 1 ]; then
+            echo -e "${DIM}Cleaned up source GGUF file(s) from storage. RAGNROK_KEEP_GGUF=1 keeps them.${NC}"
+        fi
+    fi
     return 0
 }
